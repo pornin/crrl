@@ -1,0 +1,67 @@
+[package]
+name = "crrl"
+version = "0.1.0"
+authors = ["Thomas Pornin <thomas.pornin@nccgroup.com>"]
+edition = "2018"
+license = "MIT"
+description = "Library for cryptographic research"
+repository = "https://github.com/pornin/crrl"
+readme = "README.md"
+categories = ["cryptography", "no-std"]
+keywords = ["cryptography", "ed25519", "ristretto255", "p256"]
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+sha2 = "0.10.2"
+
+[dev-dependencies]
+hex = "0.4.3"
+num-bigint = "0.4.3"
+
+# Set feature "w32_backend" or "w64_backend" to force use of the 32-bit or
+# 64-bit backend explicitly. If neither is set then the backend will be
+# selected automatically (architectures with 64-bit pointers get the 64-bit
+# backend, while architectures with 32-bit pointers get the 32-bit backend).
+# The "64-bit backend on 32-bit arch" combination might not be fully
+# constant-time (depending on how the compiler implements multiplications
+# on multi-limb integers) and thus should be avoided.
+#
+# Default feature 'std' enables uses of heap allocation, which is used by
+# some functions. By disabling it, a core-only library can be obtained.
+[features]
+default = ["std"]
+std = ["alloc"]
+alloc = []
+w32_backend = []
+w64_backend = []
+
+[[bench]]
+name = "modint"
+path = "benches/modint.rs"
+harness = false
+
+[[bench]]
+name = "gf255"
+path = "benches/gf255.rs"
+harness = false
+
+[[bench]]
+name = "ed25519"
+path = "benches/ed25519.rs"
+harness = false
+
+[[bench]]
+name = "x25519"
+path = "benches/x25519.rs"
+harness = false
+
+[[bench]]
+name = "p256"
+path = "benches/p256.rs"
+harness = false
+
+[[bench]]
+name = "ristretto255"
+path = "benches/ristretto255.rs"
+harness = false
