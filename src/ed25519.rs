@@ -1661,7 +1661,7 @@ impl PublicKey {
     /// been reused to store other data, and thus it ignores these bits.
     /// `rm` MUST be in the 8 to 32 range (inclusive); ignored elements
     /// are the last `floor(rm/8)` bytes, and the top (most significant)
-    /// `rm%8` bits of the last non-ignore byte.
+    /// `rm%8` bits of the last non-ignored byte.
     ///
     /// If the original, untruncated signature was valid, then this
     /// function rebuilds it and returns it; otherwise, it returns `None`
@@ -1686,7 +1686,7 @@ impl PublicKey {
     /// to store other data, and thus it ignores these bits. `rm` MUST be
     /// in the 8 to 32 range (inclusive); ignored elements are the last
     /// `floor(rm/8)` bytes, and the top (most significant) `rm%8` bits
-    /// of the last non-ignore byte.
+    /// of the last non-ignored byte.
     ///
     /// If the original, untruncated signature was valid, then this
     /// function rebuilds it and returns it; otherwise, it returns `None`
@@ -1713,7 +1713,7 @@ impl PublicKey {
     /// signature have been reused to store other data, and thus it
     /// ignores these bits. `rm` MUST be in the 8 to 32 range
     /// (inclusive); ignored elements are the last `floor(rm/8)` bytes,
-    /// and the top (most significant) `rm%8` bits of the last non-ignore
+    /// and the top (most significant) `rm%8` bits of the last non-ignored
     /// byte.
     ///
     /// If the original, untruncated signature was valid, then this
@@ -1858,7 +1858,7 @@ impl PublicKey {
         //     = 2^(254 - nJ)*B
         // Since we set nJ to a maximum of 14, we know that all values j*I*U
         // are necessarily in the set of j*2^240*B, for j = 0 to 2^14; these
-        // are the values that were used to generate array UY_COMP[].
+        // are the values that were used to generate array UX_COMP[].
 
         // We compute V_i = V - i*U for all i such that 0 <= i < I. We
         // then compare these points with the points j*I*U. To optimize

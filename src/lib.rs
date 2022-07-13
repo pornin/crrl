@@ -31,7 +31,7 @@
 //! # Conventions
 //!
 //! All implemented functions should be strictly constant-time, unless
-//! explcitly documented otherwise (non-constant-time functions normally
+//! explicitly documented otherwise (non-constant-time functions normally
 //! have "vartime" in their name). In order to avoid unwanted side-channel
 //! leaks, Booleans are avoided (compilers tend to "optimize" things a bit
 //! too eagerly when handling `bool` values). All functions that return or
@@ -71,7 +71,7 @@
 //! # Performance
 //!
 //! On an Intel i5-8259U CPU (Coffee Lake core), Ed25519 signatures have
-//! been benchmarked at aout 51500 cycles for signing, 114000 cycles
+//! been benchmarked at about 51500 cycles for signing, 114000 cycles
 //! for verification; these are not bad values, and are competitive or at
 //! least within 30% of performance obtained from assembly-optimized
 //! implementations on the same hardware. For P-256, signing time is

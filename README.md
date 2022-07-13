@@ -48,7 +48,7 @@ Type `GF255` and `ModInt256` have a 32-bit and a 64-bit implementations
 each. The code is portable (it was tested on 32-bit and 64-bit x86, and
 64-bit aarch64). Performance is quite decent; e.g. Ed25519 signatures
 are computed in about 51500 cycles, and verified in about 114000 cycles,
-on an Intel "Coffe Lake" CPU; this is not too far from the best
+on an Intel "Coffee Lake" CPU; this is not too far from the best
 assembly-optimized implementations. At the same time, use of operator
 overloading allows to express formulas on points and scalar with about
 the same syntax as their mathematical description. For instance, the
