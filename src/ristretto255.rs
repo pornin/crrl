@@ -416,6 +416,16 @@ impl Point {
     pub fn xdouble(self, n: u32) -> Self {
         Self(self.0.xdouble(n))
     }
+
+    /// Given scalars `u` and `v`, returns `u*self + v*B` (with `B` being
+    /// the conventional generator of the prime order subgroup).
+    ///
+    /// THIS FUNCTION IS NOT CONSTANT-TIME; it shall be used only with
+    /// public data.
+    #[inline(always)]
+    pub fn mul_add_mulgen_vartime(self, u: &Scalar, v: &Scalar) -> Self {
+	    Self(self.0.mul_add_mulgen_vartime(u, v))
+    }
 }
 
 impl Add<Point> for Point {
@@ -888,5 +898,13 @@ mod tests {
             let output = hex::decode(tv.O).unwrap();
             assert!(Point::one_way_map(&input[..]).encode() == &output[..]);
         }
+    }
+
+    #[test]
+    fn mul_add_mulgen_vartime() {
+        let q = Point::one_way_map(&[99u8; 64]);
+        let u = Scalar::ONE + Scalar::ONE + Scalar::ONE;
+        let v = u + Scalar::ONE + Scalar::ONE;
+        assert_ne!(((q * u) + (Point::BASE * v)).equals(q.mul_add_mulgen_vartime(&u, &v)), 0);
     }
 }
