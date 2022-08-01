@@ -419,12 +419,29 @@ impl Point {
 
     /// Given scalars `u` and `v`, returns `u*self + v*B` (with `B` being
     /// the conventional generator of the prime order subgroup).
+    //
+    // This can be used to support EdDSA signature verification, though
+    // for that task `verify_helper_vartime()` is faster.
     ///
     /// THIS FUNCTION IS NOT CONSTANT-TIME; it shall be used only with
     /// public data.
     #[inline(always)]
     pub fn mul_add_mulgen_vartime(self, u: &Scalar, v: &Scalar) -> Self {
 	    Self(self.0.mul_add_mulgen_vartime(u, v))
+    }
+
+    /// Check whether `s*B = R + k*A`, for the provided scalars `s`
+    /// and `k`, provided points `A` (`self`) and `R`, and conventional
+    /// generator `B`.
+    ///
+    /// Returned value is true on match, false otherwise. This function
+    /// is meant to support EdDSA-style signature verification.
+    ///
+    /// THIS FUNCTION IS NOT CONSTANT-TIME; it shall be used only with
+    /// public data.
+    pub fn verify_helper_vartime(self,
+                                 R: &Point, s: &Scalar, k: &Scalar) -> bool {
+        self.0.verify_helper_vartime(&R.0, s, k)
     }
 }
 
