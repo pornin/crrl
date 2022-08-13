@@ -9,6 +9,7 @@ repository = "https://github.com/pornin/crrl"
 readme = "README.md"
 categories = ["cryptography", "no-std"]
 keywords = ["cryptography", "ed25519", "ristretto255", "p256", "jq255e", "jq255s"]
+exclude = ["extra/*"]
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
