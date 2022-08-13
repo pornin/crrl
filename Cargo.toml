@@ -8,7 +8,7 @@ description = "Library for cryptographic research"
 repository = "https://github.com/pornin/crrl"
 readme = "README.md"
 categories = ["cryptography", "no-std"]
-keywords = ["cryptography", "ed25519", "ristretto255", "p256"]
+keywords = ["cryptography", "ed25519", "ristretto255", "p256", "jq255e", "jq255s"]
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
