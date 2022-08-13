@@ -18,8 +18,10 @@
 //! Ristretto255 (internally based on Edwards25519) is defined in the
 //! `ristretto255` module. NIST curve P-256 (aka "secp256r1" and
 //! "prime256v1") is implemented in the `p256` module (with the ECDSA
-//! signature algorithm). Other curves will be implemented in the near
-//! future (in particular double-odd curves do255e and do255s).
+//! signature algorithm). Double-odd curves jq255e and jq255s are
+//! implemented by `jq255e` and `jq255s`, respectively (including
+//! signature and key exchange schemes). Other curves will be implemented
+//! in the future (e.g. secp256k1).
 //!
 //! # Usage
 //!
@@ -71,17 +73,21 @@
 //! # Performance
 //!
 //! On an Intel i5-8259U CPU (Coffee Lake core), Ed25519 signatures have
-//! been benchmarked at about 51500 cycles for signing, 114000 cycles
-//! for verification; these are not bad values, and are competitive or at
+//! been benchmarked at about 51600 cycles for signing, 114000 cycles for
+//! verification; these are not bad values, and are competitive or at
 //! least within 30% of performance obtained from assembly-optimized
 //! implementations on the same hardware. For P-256, signing time is
-//! about 125000 cycles, verification is 256000 cycles. These figures
-//! have been obtained by compiling with Rust 1.59 in release mode,
-//! with the flags `-C target-cpu=native`.
+//! about 125000 cycles, verification is 256000 cycles. For the jq255e
+//! curve, signatures are generated in about 54700 cycles, and verified
+//! in only 82800 cycles (56200 and 86800, respectively, for jq255s).
+//! These figures have been obtained by compiling with Rust 1.59 in
+//! release mode, with the flags `-C target-cpu=native`.
 //!
 //! On an ARM Cortex A53 (RaspberryPi Model 3B), Ed25519 signing was
 //! measured at 213000 cycles, verification at 479000 cycles; for P-256,
-//! the figures were 389000 and 991000, respectively.
+//! the figures were 389000 and 991000, respectively. With jq255e,
+//! signature generation and verification use 241000 and 358000 cycles,
+//! respectively (248000 and 369000 for jq255s).
 //!
 //! No inline assembly is used. On x86-64 architectures, the
 //! `_addcarry_u64()` and `_subborrow_u64()` intrinsics are used
@@ -116,3 +122,5 @@ pub mod ed25519;
 pub mod x25519;
 pub mod p256;
 pub mod ristretto255;
+pub mod jq255e;
+pub mod jq255s;

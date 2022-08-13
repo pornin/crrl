@@ -48,6 +48,16 @@ impl<const MQ: u64> GF255<MQ> {
 
     pub const ZERO: GF255<MQ> = GF255::<MQ>([ 0, 0, 0, 0, 0, 0, 0, 0 ]);
     pub const ONE: GF255<MQ> = GF255::<MQ>([ 1, 0, 0, 0, 0, 0, 0, 0 ]);
+    pub const MINUS_ONE: GF255<MQ> = GF255::<MQ>([
+        ((MQ + 1) as u32).wrapping_neg(),
+        0xFFFFFFFF,
+        0xFFFFFFFF,
+        0xFFFFFFFF,
+        0xFFFFFFFF,
+        0xFFFFFFFF,
+        0xFFFFFFFF,
+        0x7FFFFFFF
+    ]);
 
     // 1/2^508 in the field, as a constant; this is used when computing
     // divisions in the field. The value is computed at compile-time.

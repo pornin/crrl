@@ -1,0 +1,448 @@
+Formulas for double-odd curves (Jacobi quartic version)
+=======================================================
+
+This is an ASCII-only version of the formulas used to compute operations
+in double-odd curves. Specialized versions for the jq255e and jq255s
+instantiations are also provided.
+
+A double-odd curve C(a,b) is defined over a finite field, for two
+constants a and b such that:
+   b is not a square in the field
+   a^2 - 4*b is not a square in the field
+C(a,b) has order 2*r, for an odd integer r. We usually select curves
+such that r is prime, but this is not required by the formulas below.
+We define also:
+   ap = -2*a
+   bp = a^2 - 4*b
+The curve C(ap,bp) is isogenous to C(a,b).
+
+The curve is the set of points (x,y) such that y^2 = x*(x^2 + a*x + b),
+along with a formal point-at-infinity (with no defined affine
+coordinates) denoted INF. The curve contains also the point N = (0,0),
+which has order 2 (i.e. N+N = INF); this is the only curve point of
+order 2. From the (x,y) coordinates, we can define more coordinates:
+   w = y/x   (N: w = 0; INF: w = 0)
+   u = x/y   (N: u = 0; INF: u = 0)
+   e = u^2*(x - b/x) = (x^2 - b)/(x^2 + a*x + b)   (N: e = -1; INF: e = +1)
+Note that e is never zero for any point.
+
+For a point P = (x,y,w,u,e), we have:
+   -P = (x, -y, -w, -u, e)
+   P+N = (b/x, -b*y/x^2, -w, -u, -e)
+
+For a point P distinct from N and INF, the following hold:
+   x != 0, w != 0, u != 0
+   x is a square if and only if P is an r-torsion point (i.e. r*P = INF)
+   the only other curve point with the same w (or the same u) as P is -P+N
+For any point P (including N and INF):
+   2*P is always an r-torsion point
+   2*P+N is never an r-torsion point
+
+The group G(a,b), of order r, is the quotient of C(a,b) by the subgroup
+{N,INF}. In other words, each element of G(a,b) can be represented by
+any of two points P and P+N, where P is an r-torsion point (r*P = INF);
+the neutral element corresponds to the points INF and N.
+
+The original description of G(a,b) systematically used the P+N
+representant. Encoding used only the w coordinate; when decoding, the
+two possible matching x coordinates (for points P+N and -P) were
+recovered, and the correct one was identified with a Legendre symbol
+computation (x(P+N) is a non-square, while x(-P) is a square). When
+using only P+N representants, the neutral is N with defined affine
+coordinates, and complete formulas in (x,u) coordinates can be defined;
+see the original double-odd whitepaper. Fractional (x,u) coordinates
+represent both x and u as fractions (with independent denominators)
+and lead to generic and complete point addition formulas in 10M.
+
+The new description of G(a,b) uses (e,u) coordinates. In (e,u)
+coordinates, the curve equation becomes:
+   e^2 = bp*u^4 + ap*u^2 + 1
+(with bp = a^2 - 4*b, and ap = -2*a)
+This equation is known as the (extended) Jacobi quartic. Several
+formulas are known; in particular, some are complete on the whole curve,
+so that we do not have to make sure that we work on the P+N
+representants of the group. This allows for a different and faster
+decoding process, which still involves a square root, but avoids the
+extra Legendre symbol.
+
+For the new decoding process, we need a sign convention, i.e. a sign()
+function such that:
+   for any field element d, sign(d) = 0 or 1
+   sign(0) = 0
+   for any d != 0, sign(-d) = 1 - sign(d)
+Values d such that sign(d) = 1 are called "negative"; values such that
+sign(d) = 0 are "non-negative". When the finite field consists of the
+integers modulo a prime p, we can use the least significant bit of an
+element (as an integer in the 0 to p-1 range) as the sign.
+
+We use the extended coordinates from Hisil-Wong-Carter-Dawson 2009:
+https://eprint.iacr.org/2009/312
+An equivalent description was proposed earlier by Duquesne:
+https://hal-lirmm.ccsd.cnrs.fr/file/index/docid/145805/filename/jacobi_IPL.pdf
+but the HWCD 2009 notations are more convenient.
+
+A point (e,u) is represented as (E:Z:U:T) with:
+   Z != 0
+   e = E/Z
+   u = U/Z
+   u^2 = T/Z   (i.e. U^2 = T*Z)
+For P = (E:Z:U:T), we have -P = (E:Z:-U:T), and P+N = (-E:Z:-U:T).
+The group neutral can be represented by N = (-1:1:0:0) or INF = (1:1:0:0).
+
+When performing doublings, we also transiently convert to Jacobian (x,w)
+coordinates, in which a point P = (x,w) is represented as (X:W:J) with:
+   W != 0
+   x = X/J^2
+   w = W/J
+The special points N and INF use:
+   N = (0:W:0)      for any W != 0
+   INF = (W^2:W:0)  for any W != 0
+These specific conventions for N and INF allows us to get complete
+formulas for doubling, and for conversions EZUT <-> XWJ.
+
+Decoding:
+---------
+    input: field element u
+    output: P = (E:Z:U:T)
+
+    ee = (a^2-4*b)*u^4 - 2*a*u^2 + 1
+    E = sqrt(ee)   # if ee is not a square, input is invalid
+    if sign(E) == 1:
+        E = -E
+    Z = 1
+    U = u
+    T = u^2
+    return (E:Z:U:T)
+
+Encoding:
+---------
+    input: P = (E:Z:U:T)
+    output: field element w
+
+    iZ = 1/Z
+    u = U*iZ
+    if sign(E*iZ) == 1:
+        u = -u
+    return u
+
+    The sign convention corresponds to the decoding process: given
+    a point P = (e,u), the other representant of the same group element
+    is P+N = (-e,-u). We choose the representant whose e coordinate
+    is non-negative, and encode the u coordinate of that point. The decoding
+    process will take care to use the non-negative e.
+
+General addition:
+-----------------
+    input: P1 = (E1:Z1:U1:T1) and P2 = (E2:Z2:U2:T2)
+    output: P3 = P1 + P2 = (E3:Z3:U3:T3)
+    cost: 8M+3S
+
+    e1e2 = E1*E2
+    z1z2 = Z1*Z2
+    u1u2 = U1*U2
+    t1t2 = T1*T2
+      zt = (Z1 + T1)*(Z2 + T2) - z1z2 - t1t2
+      eu = (E1 + U1)*(E2 + U2) - e1e2 - u1u2
+      hd = z1z2 - bp*t1t2
+      E3 = (z1z2 + bp*t1t2)*(e1e2 + ap*u1u2) + 2*bp*u1u2*zt
+      Z3 = hd^2
+      T3 = eu^2
+      U3 = ((hd + eu)^2 - Z3 - T3)/2   # or: U3 = hd*eu
+
+    For jq255e: ap = 0, bp = 8
+    For jq255s: ap = 2, bp = -1
+
+Addition with affine:
+---------------------
+    If point P2 is known in advance (precomputed table), then it can
+    be represented in three affine coordinates (e2,u2,t2) (with
+    t2 = u2^2). The value Z2 is implicitly equal to 1, which simplifies
+    the formulas above into:
+
+    e1e2 = E1*e2
+    u1u2 = U1*u2
+    t1t2 = T1*t2
+      zt = Z1*t2 + T1
+      eu = (E1 + U1)*(e2 + u2) - e1e2 - u1u2
+      hd = Z1 - bp*t1t2
+      E3 = (Z1 + bp*t1t2)*(e1e2 + ap*u1u2) + 2*bp*u1u2*zt
+      Z3 = hd^2
+      T3 = eu^2
+      U3 = ((hd + eu)^2 - Z3 - T3)/2   # or: U3 = hd*eu
+
+    Compared to the general point addition formulas, these formulas
+    save one multiplication, for a total cost of 7M+3S.
+
+Negation:
+---------
+    input: P = (E:Z:U:T)
+    output: -P
+
+    return (E:Z:-U:T)
+
+Doubling to Jacobian:
+---------------------
+    input: P = (E:Z:U:T)
+    output: 2*P+N = (X':W':J')
+    cost: 2M+2S  (1M+3S if working modulo p = 3 mod 4)
+
+    tz = U^2
+    X' = (16*b)*tz^2
+    W' = (bp*T + Z)*(T - Z) + (bp - 1)*tz
+    J' = 2*E*U
+
+    If p = 3 mod 4, we can compute W' as:
+       W' = 2*g*tz - (g*T + Z)^2
+    with g = sqrt(-bp). This is applicable to jq255s, where bp = -1,
+    which leads to: W' = 2*tz - (T + Z)^2
+
+Alternate doubling to Jacobian for jq255e:
+------------------------------------------
+    input: P = (E:Z:U:T)  (on curve jq255e with a = 0, b = -2)
+    output: 2*P = (X':W':J')
+    cost: 1M+3S
+
+    ee = E^2
+    X' = ee^2
+    W' = 2*Z^2 - ee
+    J' = 2*E*U
+
+    These formulas apply to curves with a = 0 (e.g. jq255e); they don't
+    depend on the value of b. Such curves are usually defined over a
+    field with p = 1 mod 4 (with p = 3 mod 4, using a = 0 yields a
+    supersingular curve), and thus they use 2M+2S with the generic
+    doubling to Jacobian coordinates.
+
+    Note that the alternate formulas yield 2*P instead of 2*P+N;
+    on our group G(a,b), this is fine, both 2*P and 2*P+N work.
+
+Conversion XWJ -> EZUT:
+-----------------------
+    input: P = (X:W:J)
+    output: P = (E:Z:U:T)
+    cost: 3S
+
+    Z = W^2
+    T = J^2
+    U = ((W + J)^2 - Z - T)/2   # or: U = W*J
+    E = 2*X - Z + a*T
+
+    These formulas work for all double-odd curves. It can be verified
+    that they properly handle N = (0:W:0) and INF = (W^2:W:0).
+
+(Multiple) doublings in EZUT:
+-----------------------------
+    By combining the doubling to Jacobian formulas with the conversion
+    back to EZUT, one obtains general doubling formulas. Cost is:
+       general case: 2M+2S + 3S = 2M+5S
+       p = 3 mod 4:  1M+3S + 3S = 1M+6S  (includes jq255s)
+       a = 0:        1M+3S + 3S = 1M+6S  (includes jq255e)
+    If computing a sequence of successive doublings (as is common in
+    implementations of point multiplication by a scalar), then extra
+    doublings in Jacobian coordinates can be inserted between the
+    initial doubling to Jacobian, and the final conversion back to EZUT;
+    this yields better performance if the curve admits some faster
+    doubling formulas when working in Jacobian coordinates. This is the
+    case for both jq255e and jq255s (see below).
+
+Extra doublings in Jacobian coordinates (on jq255e):
+----------------------------------------------------
+    input: P = (X:W:J)  (on curve jq255e with a = 0, b = -2)
+    output: 2*P = (X':W':J')
+    cost: 1M+5S
+
+    ww = W^2
+    t1 = ww - 2*X
+    t2 = t1^2
+    J' = ((W + t1)^2 - ww - t2)*J   # or: J' = 2*W*t1*J
+    W' = t2 - 2*ww^2
+    X' = t2^2
+
+Extra doublings in Jacobian coordinates (on jq255s):
+----------------------------------------------------
+    input: P = (X:W:J)  (on curve jq255s with a = -1, b = 1/2)
+    output: 2*P+N = (X':W':J')
+    cost: 2M+4S
+
+    t1 = W*J
+    t2 = t1^2
+    X' = 8*t2^2
+    t3 = (W + J)^2 - 2*t1
+    W' = 2*t2 - t3^2
+    J' = 2*t1*(2*X - t3)
+
+    These formulas compute 2*P+N instead of 2*P; on the group G(a,b), this
+    is fine, 2*P and 2*P+N represent the same group element.
+    It can be advantageous in some implementations to divide J' and W'
+    by 2, and X' by 4, which does not change the represented point, but
+    leads to the following alternate formulas:
+
+    t1 = W*J
+    t2 = t1^2
+    X' = 2*t2^2
+    t3 = (W + J)^2 - 2*t1
+    W' = t2 - (t3^2)/2
+    J' = t1*(2*X - t3)
+
+Neutral test:
+-------------
+    input: P = (E:Z:U:T)
+    output: true if P represents the neutral element of G(a,b)
+
+    return U == 0
+
+Equality test:
+--------------
+    input: P1 = (E1:Z1:U1:T1) and P2 = (E2:Z2:U2:T2)
+    output: true if P1 and P2 represent the same element of G(a,b)
+
+    return U1*E2 == U2*E1
+
+    This test works on the following remark: the isogeny psi()
+    defined as:
+       psi(e,u) = ((1 - bp*u^4)/(e^2), -u/e)
+    maps the curve C(a,b) to the subgroup of r-torsion points on the
+    dual curve C(ap,bp) (with ap = -2*a and bp = a^2 - 4*b); its
+    kernel is exactly {N,INF}, and two points P1 and P2 on C(a,b) represent
+    the same element in G(a,b) if and only if psi(P1) = psi(P2).
+    C(ap,bp) is also a double-odd curve. On a double-odd curve, the u
+    coordinate uniquely defines an r-torsion point (only two points on
+    a double-odd curve can share the same u, and exactly one of them
+    is an r-torsion point). Thus, P1 and P2 represent the same element
+    if and only if psi(P1) and psi(P2) have the same u coordinate,
+    i.e. -u1/e1 = -u2/e2. Note that e1 and e2 are never zero, so the
+    equality check is well-defined for all points.
+
+Map to curve jq255e:
+--------------------
+    input: a field element f
+    output: point P = (E:Z:U:T) on jq255e (a = 0, b = -2)
+
+    let d = sqrt(-1) (we conventionally use the non-negative root)
+
+    if f == 0:
+        return N (or INF)
+
+    # map to C(ap,bp)
+    x1num = 4*f^2 - 7
+    x2num = d*(4*f^2 + 7)
+    xden = 4*f
+    yy1num = 64*f^7 + 176*f^5 - 308*f^3 - 343*f
+    yy2num = -d*(64*f^7 - 176*f^5 - 308*f^3 + 343*f)
+    yden = 8*f^2
+    if yy1num is a square:
+        xnum = x1num
+        yynum = yy1num
+    elif yy2num is a square:
+        xnum = x2num
+        yynum = yy2num
+    else:
+        xnum = x1num*x2num
+        yynum = yy1num*yy2num
+        xden = xden^2
+        yden = yden^2
+    ynum = sqrt(yynum)
+    if sign(ynum) == 1:
+        ynum = -ynum
+    unum = xnum * yden
+    uden = xden * ynum
+
+    # apply isogeny to get back to C(a,b), then convert to EZUT
+    xn = -8*unum^2
+    xd = uden^2
+    un = 2*xnum*xden*uden
+    ud = unum*(xnum^2 - 8*xden^2)
+    en = xn^2 + 2*xd^2
+    ed = xn^2 - 2*xd^2
+    ud2 = ud^2
+    uned = un*ed
+    E = en*ud2
+    Z = ed*ud2
+    U = ud*uned
+    T = un*uned
+
+    By changing the few constants appropriately, this map can be adapted
+    to any double-odd curve with a = 0 (though, as pointed out in the
+    original double-odd paper, curve isomorphisms can be applied to
+    transform any such non-supersingular curve into a double-odd curve
+    with b = 2 or b = -2).
+    Most of the cost lies in the two Legendre symbols (on yy1num and
+    yy2num) and the square root.
+
+    In a constant-time implementation, the initial test f == 0 should be
+    replaced with a constant-time conditional replacement of the output
+    with the neutral. Alternatively, it can be shown that with the above
+    formulas, f == 0 leads to xn, xd, un and ud being all equal to zero;
+    a conditional replacement of xd and ud with a non-zero value in that
+    case fixes the output correctly.
+
+    This map is considered one-way, but it outputs points with a
+    non-uniform distribution that can be easily distinguished
+    statistically from uniformly random selection. A proper
+    hash-to-curve invokes this map twice on two distinct inputs obtained
+    through a classic hash function, and adds the resulting points
+    together.
+
+Map to curve jq255s:
+--------------------
+    input: a field element f
+    output: point P = (E:Z:U:T) on jq255s (a = -1, b = 1/2)
+
+    if f == 1 or f == -1:
+        return N (or INF)
+
+    # map to C(ap,bp) (Elligator2 map)
+    yy1num = -2*f^6 + 14*f^4 - 14*f^2 + 2
+    yy2num = -yy1num*f^2
+    xden = 1 - f^2
+    if yy1num is a square:
+        xnum = -2
+        yynum = yy1num
+    else:
+        xnum = 2*f^2
+        yynum = yy2num
+    ynum = sqrt(yynum)
+    if sign(ynum) == 1:
+        ynum = -ynum
+    if yy1num is not a square:
+        ynum = -ynum
+    unum = xnum * xden
+    uden = ynum
+    if ynum == 0:
+        return N (or INF)
+
+    # apply isogeny to get back to C(a,b), then convert to EZUT
+    xn = 2*unum^2
+    xd = uden^2
+    un = 2*uden
+    ud = xnum^2 + xden^2
+    t1 = xn*(2*xn - xd)
+    t2 = xd*(xn - xd)
+    en = t1 + t2
+    ed = t1 - t2
+    ud2 = ud^2
+    uned = un*ed
+    E = en*ud2
+    Z = ed*ud2
+    U = ud*uned
+    T = un*uned
+
+    By changing the few constants appropriately, this map can be adapted
+    to any double-odd curve with a != 0. This really is the Elligator2
+    map.
+    Most of the cost lies in the single Legendre symbol (on yy1num) and
+    the square root.
+
+    In a constant-time implementation, the initial test on f, and the
+    later test on ynum, should be replaced with constant-time adjustments
+    later on. It can be shown that all such cases lead to ynum == 0;
+    ud and un are still correctly computed, but xn and xd are incorrect.
+    The fix is then a conditional replacement of (xn,xd) with (0,1) in
+    case the computed ynum == 0.
+
+    This map is considered one-way, but it outputs points with a
+    non-uniform distribution that can be easily distinguished
+    statistically from uniformly random selection. A proper
+    hash-to-curve invokes this map twice on two distinct inputs obtained
+    through a classic hash function, and adds the resulting points
+    together.

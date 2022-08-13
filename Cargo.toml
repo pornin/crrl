@@ -14,6 +14,8 @@ keywords = ["cryptography", "ed25519", "ristretto255", "p256"]
 
 [dependencies]
 sha2 = "0.10.2"
+blake2 = "0.10.4"
+rand_core = "0.6"
 
 [dev-dependencies]
 hex = "0.4.3"
@@ -64,4 +66,14 @@ harness = false
 [[bench]]
 name = "ristretto255"
 path = "benches/ristretto255.rs"
+harness = false
+
+[[bench]]
+name = "jq255e"
+path = "benches/jq255e.rs"
+harness = false
+
+[[bench]]
+name = "jq255s"
+path = "benches/jq255s.rs"
 harness = false

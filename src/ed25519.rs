@@ -100,8 +100,10 @@
 #![allow(non_snake_case)]
 
 use core::ops::{Add, AddAssign, Mul, MulAssign, Neg, Sub, SubAssign};
+use core::convert::TryFrom;
 use super::field::{GF25519, ModInt256};
 use sha2::{Sha512, Digest};
+use rand_core::{CryptoRng, RngCore};
 
 /// A point on the twisted Edwards curve edwards25519.
 #[derive(Clone, Copy, Debug)]
@@ -1405,6 +1407,7 @@ impl SubAssign<&Point> for Point {
 #[derive(Clone, Copy, Debug)]
 pub struct PrivateKey {
     s: Scalar,                  // secret scalar
+    seed: [u8; 32],             // source seed
     h: [u8; 32],                // derived seed (second half of SHA-512(seed))
     pub public_key: PublicKey,  // public key
 }
@@ -1430,6 +1433,13 @@ const HASH_HEAD: [u8; 32] = [
 
 impl PrivateKey {
 
+    /// Generates a new private key from a cryptographically secure RNG.
+    pub fn generate<T: CryptoRng + RngCore>(rng: &mut T) -> Self {
+        let mut seed = [0u8; 32];
+        rng.fill_bytes(&mut seed);
+        Self::from_seed(&seed)
+    }
+
     /// Instantiates a private key from the provided seed.
     ///
     /// The seed length MUST be exactly 32 bytes (a panic is triggered
@@ -1439,6 +1449,8 @@ impl PrivateKey {
 
         // The seed MUST have length 32 bytes.
         assert!(seed.len() == 32);
+        let mut bseed = [0u8; 32];
+        bseed[..].copy_from_slice(seed);
 
         // Hash the seed with SHA-512.
         let mut sh = Sha512::new();
@@ -1459,7 +1471,27 @@ impl PrivateKey {
         // Public key is obtained from the secret scalar.
         let public_key = PublicKey::from_point(&Point::mulgen(&s));
 
-        Self { s, h, public_key }
+        Self { s, seed: bseed, h, public_key }
+    }
+
+    /// Decodes a private key from bytes.
+    ///
+    /// If the source slice has length exactly 32 bytes, then these bytes
+    /// are interpreted as a seed, and the private key is built on that
+    /// seed (see `from_seed()`). Otherwise, `None` is returned.
+    pub fn decode(buf: &[u8]) -> Option<Self> {
+        if buf.len() == 32 {
+            Some(Self::from_seed(<&[u8; 32]>::try_from(buf).unwrap()))
+        } else {
+            None
+        }
+    }
+
+    /// Encodes a private key into 32 bytes.
+    ///
+    /// This actually returns a copy of the seed.
+    pub fn encode(self) -> [u8; 32] {
+        self.seed
     }
 
     /// Signs a message.
@@ -1612,6 +1644,39 @@ impl PublicKey {
     fn verify_inner(self, sig: &[u8], dom: bool, phflag: u8, ctx: &[u8],
                     m: &[u8]) -> bool
     {
+        /*
+         * Old verification code which does not use verify_helper_vartime().
+         * This code also checks the alternate verification equation,
+         * without the cofactor, which is allowed by RFC 8032, but
+         * slightly deviates from the behaviour we wish to achieve.
+
+        if sig.len() != 64 {
+            return false;
+        }
+        let R_enc = &sig[0..32];
+        let (S, ok) = Scalar::decode32(&sig[32..64]);
+        if ok == 0 {
+            return false;
+        }
+        let mut sh = Sha512::new();
+        if dom {
+            assert!(ctx.len() <= 255);
+            let clen = ctx.len() as u8;
+            sh.update(&HASH_HEAD);
+            sh.update(&[phflag]);
+            sh.update(&[clen]);
+            sh.update(ctx);
+        }
+        sh.update(R_enc);
+        sh.update(&self.encoded);
+        sh.update(m);
+        let hv2 = sh.finalize();
+        let k = Scalar::decode_reduce(&hv2);
+        let R = self.point.mul_add_mulgen_vartime(&-k, &S);
+        &R.encode()[..] == R_enc
+
+         */
+
         // Signature must have length 64 bytes exactly.
         if sig.len() != 64 {
             return false;

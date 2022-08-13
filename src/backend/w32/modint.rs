@@ -40,6 +40,8 @@ impl<const M0: u64, const M1: u64, const M2: u64, const M3: u64> ModInt256<M0, M
         ModInt256::<M0, M1, M2, M3>([ 0, 0, 0, 0, 0, 0, 0, 0 ]);
     pub const ONE: ModInt256<M0, M1, M2, M3> =
         ModInt256::<M0, M1, M2, M3>::w64le(1, 0, 0, 0);
+    pub const MINUS_ONE: ModInt256<M0, M1, M2, M3> =
+        ModInt256::<M0, M1, M2, M3>::w64le(M0 - 1, M1, M2, M3);
 
     const M0I: u32 = Self::make_m0i(M0 as u32);
     const HMP1: Self = Self::make_hmp1();

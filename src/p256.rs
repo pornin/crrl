@@ -118,6 +118,7 @@
 use core::ops::{Add, AddAssign, Mul, MulAssign, Neg, Sub, SubAssign};
 use super::field::{GFp256, ModInt256};
 use sha2::{Sha256, Sha512, Digest};
+use rand_core::{CryptoRng, RngCore};
 
 #[cfg(feature = "alloc")]
 use crate::Vec;
@@ -1715,6 +1716,13 @@ pub struct PublicKey {
 
 impl PrivateKey {
 
+    /// Generates a new private key from a cryptographically secure RNG.
+    pub fn generate<T: CryptoRng + RngCore>(rng: &mut T) -> Self {
+        let mut seed = [0u8; 32];
+        rng.fill_bytes(&mut seed);
+        Self::from_seed(&seed)
+    }
+
     /// Instantiates a private key by decoding the provided 32-byte
     /// array.
     ///
@@ -3206,7 +3214,7 @@ mod tests {
         seed[32..48].copy_from_slice(&sh.finalize_reset()[0..16]);
         let skey = PrivateKey::from_seed(&seed);
         let pkey = skey.to_public_key();
-        for i in 0..10 {
+        for i in 0..2 {
             let mut msg = [0u8; 8];
             msg[..].copy_from_slice(&(i as u64).to_le_bytes());
             sh.update(&msg);
