@@ -571,8 +571,8 @@ impl Point {
 
     /// Adds the affine point `rhs` to `self`.
     ///
-    /// If the point to add is the neutral, then `rhs.x` and `rhs.y` are
-    /// both zero, and `rz` is 0xFFFFFFFF; otherwise, `rhs.x` and `rhs.y`
+    /// If the point to add is the neutral, then `rhs.x` and `rhs.y` can
+    /// be arbitrary, and `rz` is 0xFFFFFFFF; otherwise, `rhs.x` and `rhs.y`
     /// are the affine coordinates of the point to add, and `rz` is
     /// 0x00000000.
     fn set_add_affine(&mut self, rhs: &PointAffine, rz: u32) {
@@ -609,8 +609,8 @@ impl Point {
 
     /// Subtract the affine point `rhs` from `self`.
     ///
-    /// If the point to add is the neutral, then `rhs.x` and `rhs.y` are
-    /// both zero, and `rz` is 0xFFFFFFFF; otherwise, `rhs.x` and `rhs.y`
+    /// If the point to add is the neutral, then `rhs.x` and `rhs.y` can
+    /// be arbitrary, and `rz` is 0xFFFFFFFF; otherwise, `rhs.x` and `rhs.y`
     /// are the affine coordinates of the point to add, and `rz` is
     /// 0x00000000.
     fn set_sub_affine(&mut self, rhs: &PointAffine, rz: u32) {
