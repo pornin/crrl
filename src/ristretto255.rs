@@ -420,7 +420,7 @@ impl Point {
     /// Given scalars `u` and `v`, returns `u*self + v*B` (with `B` being
     /// the conventional generator of the prime order subgroup).
     //
-    // This can be used to support EdDSA signature verification, though
+    // This can be used to support EdDSA-style signature verification, though
     // for that task `verify_helper_vartime()` is faster.
     ///
     /// THIS FUNCTION IS NOT CONSTANT-TIME; it shall be used only with
@@ -440,7 +440,8 @@ impl Point {
     /// THIS FUNCTION IS NOT CONSTANT-TIME; it shall be used only with
     /// public data.
     pub fn verify_helper_vartime(self,
-                                 R: &Point, s: &Scalar, k: &Scalar) -> bool {
+        R: &Point, s: &Scalar, k: &Scalar) -> bool
+    {
         self.0.verify_helper_vartime(&R.0, s, k)
     }
 }
@@ -742,6 +743,7 @@ impl SubAssign<&Point> for Point {
 mod tests {
 
     use super::{Point, Scalar};
+    use sha2::{Sha256, Digest};
 
     /*
     use std::fmt;
@@ -919,9 +921,24 @@ mod tests {
 
     #[test]
     fn mul_add_mulgen_vartime() {
-        let q = Point::one_way_map(&[99u8; 64]);
-        let u = Scalar::ONE + Scalar::ONE + Scalar::ONE;
-        let v = u + Scalar::ONE + Scalar::ONE;
-        assert_ne!(((q * u) + (Point::BASE * v)).equals(q.mul_add_mulgen_vartime(&u, &v)), 0);
+        let mut sh = Sha256::new();
+        for i in 0..20 {
+            // Build pseudorandom A, u and v
+            sh.update(((3 * i + 0) as u64).to_le_bytes());
+            let v1 = sh.finalize_reset();
+            sh.update(((3 * i + 1) as u64).to_le_bytes());
+            let v2 = sh.finalize_reset();
+            sh.update(((3 * i + 2) as u64).to_le_bytes());
+            let v3 = sh.finalize_reset();
+            let A = Point::mulgen(&Scalar::decode_reduce(&v1));
+            let u = Scalar::decode_reduce(&v2);
+            let v = Scalar::decode_reduce(&v3);
+
+            // Compute u*A + v*B in two different ways; check that they
+            // match.
+            let R1 = u * A + Point::mulgen(&v);
+            let R2 = A.mul_add_mulgen_vartime(&u, &v);
+            assert!(R1.equals(R2) == 0xFFFFFFFF);
+        }
     }
 }
