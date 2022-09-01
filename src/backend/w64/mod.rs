@@ -1,5 +1,6 @@
 pub mod gf255;
 pub mod modint;
+pub mod gfsecp256k1;
 pub mod lagrange;
 
 // Carrying addition and subtraction should use u64::carrying_add()

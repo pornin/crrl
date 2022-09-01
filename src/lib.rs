@@ -124,3 +124,4 @@ pub mod p256;
 pub mod ristretto255;
 pub mod jq255e;
 pub mod jq255s;
+pub mod secp256k1;

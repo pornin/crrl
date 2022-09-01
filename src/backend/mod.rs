@@ -196,6 +196,30 @@ pub type GF255<const MQ: u64> = w32::gf255::GF255<MQ>;
 pub type ModInt256<const M0: u64, const M1: u64, const M2: u64, const M3: u64> =
     w32::modint::ModInt256<M0, M1, M2, M3>;
 
+/// Finite field: integers modulo 2^256 - 2^32 - 977.
+///
+/// This is a dedicated type for the base field used by curve secp256k1.
+#[cfg(any(
+    feature = "w32_backend",
+    all(not(feature = "w64_backend"), target_pointer_width = "32"),
+))]
+pub type GFsecp256k1 = w32::modint::ModInt256<
+    0xFFFFFFFEFFFFFC2F, 0xFFFFFFFFFFFFFFFF,
+    0xFFFFFFFFFFFFFFFF, 0xFFFFFFFFFFFFFFFF>;
+
+#[cfg(any(
+    feature = "w32_backend",
+    all(not(feature = "w64_backend"), target_pointer_width = "32"),
+))]
+impl GFsecp256k1 {
+    pub fn set_mul21(&mut self) {
+        *self *= Self::w64be(0, 0, 0, 21);
+    }
+    pub fn mul21(self) -> Self {
+        self * Self::w64be(0, 0, 0, 21)
+    }
+}
+
 #[cfg(any(
     feature = "w64_backend",
     all(not(feature = "w32_backend"), target_pointer_width = "64"),
@@ -242,3 +266,12 @@ pub type GF255<const MQ: u64> = w64::gf255::GF255<MQ>;
 ))]
 pub type ModInt256<const M0: u64, const M1: u64, const M2: u64, const M3: u64> =
     w64::modint::ModInt256<M0, M1, M2, M3>;
+
+/// Finite field: integers modulo 2^256 - 2^32 - 977.
+///
+/// This is a dedicated type for the base field used by curve secp256k1.
+#[cfg(any(
+    feature = "w64_backend",
+    all(not(feature = "w32_backend"), target_pointer_width = "64"),
+))]
+pub type GFsecp256k1 = w64::gfsecp256k1::GFsecp256k1;

@@ -4,7 +4,7 @@
 //! by various curves. These are merely specializations of the
 //! backend-provided `GF255` and `ModInt256` types.
 
-pub use crate::backend::{GF255, ModInt256};
+pub use crate::backend::{GF255, ModInt256, GFsecp256k1};
 
 /// Field: integers modulo 2^255 - 19
 /// (base field for Curve25519 and derivatives: X25519, ed25519, Ristretto255).
