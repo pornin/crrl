@@ -25,6 +25,11 @@ are implemented:
     optimizations when some parts of the modulus allow them (in
     particular with the modulus used for NIST curve P-256).
 
+  - Type `GFsecp256k1` implements the specific base field for curve
+    secp256k1 (integers modulo 2^256-4294968273). The 64-bit backend
+    has a dedicated implementation, while the 32-bit version of this
+    type uses `ModInt256`.
+
   - Type `ed25519::Point` provides generic group operations in the
     twisted Edwards curve Curve25519. Ed25519 signatures (as per [RFC
     8032](https://datatracker.ietf.org/doc/html/rfc8032)) are
@@ -40,11 +45,27 @@ are implemented:
     supported. The `p256::Scalar` type implements the corresponding
     scalars (integers modulo the curve order).
 
+  - Type `secp256k1::Point` provides generic group operations in the
+    secp256k1 curve (aka "the Bitcoin curve"). ECDSA signatures are
+    supported. The `secp256k1::Scalar` type implements the corresponding
+    scalars (integers modulo the curve order). The GLV endomorphism is
+    leveraged to speed-up point multiplication (key exchange) and
+    signature verification.
+
+  - Types `jq255e::Point` and `jq255s::Point` implement the [double-odd
+    curves](https://doubleodd.group/) jq255e and jq255s (along with the
+    corresponding scalar types `jq255e::Scalar` and `jq255s::Scalar`).
+    Key exchange and Schnorr signatures are implemented. These curves
+    provide a prime-order group abstraction, similar to Ristretto255,
+    but with somewhat better performance at the same security level.
+    Moreover, the relevant signatures are both shorter (48 bytes instead
+    of 64) and faster than the usual Ed25519 signatures.
+
   - Function `x25519::x25519()` implements the [X25519 function](https://datatracker.ietf.org/doc/html/rfc7748#section-5).
     An optimized `x25519::x2559_base()` function is provided when X25519
     is applied to the conventional base point.
 
-Type `GF255` and `ModInt256` have a 32-bit and a 64-bit implementations
+Types `GF255` and `ModInt256` have a 32-bit and a 64-bit implementations
 each. The code is portable (it was tested on 32-bit and 64-bit x86, and
 64-bit aarch64). Performance is quite decent; e.g. Ed25519 signatures
 are computed in about 51500 cycles, and verified in about 114000 cycles,
@@ -144,10 +165,7 @@ work with standard signature formats. See
 
 In the future, at least the following features will be added:
 
-  - Double-odd curves do255e and do255s.
   - Schnorr signatures on Ristretto255, using the [FROST draft](https://datatracker.ietf.org/doc/html/draft-irtf-cfrg-frost-05).
-  - secp256k1 curve support (possibly with an explicit type for its
-    base field, though `ModInt256` should work out-of-the-box).
 
 In general, about anything related to cryptography may show up here,
 if there is a use case for it.
