@@ -1070,7 +1070,7 @@ impl<const MQ: u64> GF255<MQ> {
         // the binary GCD, so that we get the same guaranteed convergence
         // in a total of 508 iterations.
 
-        let mut a = *self;
+        let mut a = self;
         a.set_normalized();
         let mut b = Self([
             (MQ as u32).wrapping_neg(),
