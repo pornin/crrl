@@ -1460,6 +1460,15 @@ impl<const MQ: u64> GF255<MQ> {
         (r, cc as u32)
     }
 
+    pub fn decode(buf: &[u8]) -> Option<Self> {
+        let (r, cc) = Self::decode32(buf);
+        if cc != 0 {
+            Some(r)
+        } else {
+            None
+        }
+    }
+
     // Decode a field element from some bytes. The bytes are interpreted
     // in unsigned little-endian convention, and the resulting integer
     // is reduced modulo q. This process never fails.

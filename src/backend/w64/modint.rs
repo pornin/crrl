@@ -1631,6 +1631,33 @@ impl<const M0: u64, const M1: u64, const M2: u64, const M3: u64> ModInt256<M0, M
         (r, cc as u32)
     }
 
+    pub fn decode(buf: &[u8]) -> Option<Self> {
+        let n = 24 + (if M3 < 0x100000000 {
+            if M3 < 0x10000 {
+                if M3 < 0x100 { 1 } else { 2 }
+            } else {
+                if M3 < 0x1000000 { 3 } else { 4 }
+            }
+        } else {
+            if M3 < 0x1000000000000 {
+                if M3 < 0x10000000000 { 5 } else { 6 }
+            } else {
+                if M3 < 0x100000000000000 { 7 } else { 8 }
+            }
+        });
+        if n != buf.len() {
+            return None;
+        }
+        let mut bb = [0u8; 32];
+        bb[0..n].copy_from_slice(buf);
+        let (r, cc) = Self::decode32(&bb);
+        if cc != 0 {
+            Some(r)
+        } else {
+            None
+        }
+    }
+
     // Decode an element from some bytes. The bytes are interpreted in
     // unsigned little-endian convention, and the resulting integer is
     // reduced modulo m. This process never fails.

@@ -1415,6 +1415,15 @@ impl<const MQ: u64> GF255<MQ> {
         (r >> 31).wrapping_sub(1)
     }
 
+    pub fn decode(buf: &[u8]) -> Option<Self> {
+        let (r, cc) = Self::decode32(buf);
+        if cc != 0 {
+            Some(r)
+        } else {
+            None
+        }
+    }
+
     #[inline(always)]
     fn decode32_reduce(buf: &[u8]) -> Self {
         let mut r = Self::ZERO;

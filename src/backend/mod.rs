@@ -140,6 +140,14 @@
 //!    reduced modulo the field order, so the process never fails.
 //!    It is fully constant-time (only the length of the source slice
 //!    may leak through timing-based side channels).
+//!
+//!  - Function `decode(buf: &[u8]) -> Option<Self>` decodes some bytes
+//!    with unsigned little-endian convention. This function returns
+//!    `None` if the source does not have exactly the minimal length
+//!    that would be needed to encode the field modulus, or if the
+//!    value is not in the proper range (i.e. lower than the modulus).
+//!    Side-channels may leak whether decoding succeeded or failed, but
+//!    not what value was obtained on success.
 
 #[cfg(not(any(
     feature = "w32_backend",
