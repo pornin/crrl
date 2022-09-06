@@ -201,6 +201,45 @@ fn bench_encode() -> (f64, u8) {
     ((tt[4] as f64) / 100.0, P.encode()[0])
 }
 
+/*
+ * Old benchmark for the old is_in_subgroup() implementation.
+fn bench_subgroup_old() -> (f64, u8) {
+    let z = core_cycles();
+    let Q = Point::BASE * z;
+    let mut P = Point::NEUTRAL;
+    let mut tt = [0; 10];
+    for i in 0..10 {
+        let begin = core_cycles();
+        for _ in 0..100 {
+            let r = P.old_is_in_subgroup();
+            P.set_cond(&(P + Q), r);
+        }
+        let end = core_cycles();
+        tt[i] = end.wrapping_sub(begin);
+    }
+    tt.sort();
+    ((tt[4] as f64) / 100.0, P.encode()[0])
+}
+ */
+
+fn bench_subgroup() -> (f64, u8) {
+    let z = core_cycles();
+    let Q = Point::BASE * z;
+    let mut P = Point::NEUTRAL;
+    let mut tt = [0; 10];
+    for i in 0..10 {
+        let begin = core_cycles();
+        for _ in 0..100 {
+            let r = P.is_in_subgroup();
+            P.set_cond(&(P + Q), r);
+        }
+        let end = core_cycles();
+        tt[i] = end.wrapping_sub(begin);
+    }
+    tt.sort();
+    ((tt[4] as f64) / 100.0, P.encode()[0])
+}
+
 fn bench_pkey_verify_trunc(rm: usize) -> (f64, f64, u8) {
     let z = core_cycles();
     let mut seed = [0u8; 32];
@@ -284,6 +323,9 @@ fn main() {
     let (v, x) = bench_encode();
     bx ^= x;
     println!("Ed25519 encode:                {:13.2}", v);
+    let (v, x) = bench_subgroup();
+    bx ^= x;
+    println!("Ed25519 subgroup:              {:13.2}", v);
 
     let (v1, v2, x) = bench_pkey_verify_trunc(8);
     bx ^= x;

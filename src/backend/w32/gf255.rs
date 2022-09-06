@@ -1214,16 +1214,17 @@ impl<const MQ: u64> GF255<MQ> {
     }
 
     // Set this value to its square root. Returned value is 0xFFFFFFFF
-    // if the operation succeeded (value was indeed a quadratic residue),
-    // 0 otherwise (value was not a quadratic residue). In the latter case,
-    // this value is set to zero as well.
-    // When the operation succeeds, the returned square root is the one
-    // whose least significant bit is 0 (when normalized in 0..q-1).
+    // if the operation succeeded (value was indeed a quadratic
+    // residue), 0 otherwise (value was not a quadratic residue). In the
+    // latter case, this value is set to the square root of -self (if
+    // q = 3 mod 4) or of either 2*self or -2*self (if q = 5 mod 8). In
+    // all cases, the returned root is the one whose least significant
+    // bit is 0 (when normalized in 0..q-1).
     //
     // This operation returns unspecified results if the modulus is not
     // prime. If the modulus q is prime but is equal to 1 modulo 8, then
     // the method is not implemented (which triggers a panic).
-    fn set_sqrt(&mut self) -> u32 {
+    fn set_sqrt_ext(&mut self) -> u32 {
         // We can support only q = 3, 5 or 7 mod 8, not q = 1 mod 8.
         // See compile_time_checks() for the compile-time verification
         // that MQ matches that restriction.
@@ -1257,7 +1258,7 @@ impl<const MQ: u64> GF255<MQ> {
             // q = 3 mod 4; square root candidate is computed as:
             //   y <- x^((q+1)/4)
             // We need to process 13 extra exponent bits.
-            let e = (MQ as u32).wrapping_neg().wrapping_add(1) >> 2;
+            let e = MQ.wrapping_neg().wrapping_add(1) >> 2;
             for i in 0..6 {
                 y.set_xsquare(2);
                 let k = ((e >> (11 - (2 * i))) & 3) as usize;
@@ -1274,7 +1275,7 @@ impl<const MQ: u64> GF255<MQ> {
             //   b <- (2*x)^((q-5)/8)
             //   c <- 2*x*b^2
             //   y <- x*b*(c - 1)
-            let e = (MQ as u32).wrapping_neg().wrapping_sub(5) >> 3;
+            let e = MQ.wrapping_neg().wrapping_sub(5) >> 3;
             let mut b = y;
             for i in 0..6 {
                 b.set_xsquare(2);
@@ -1283,7 +1284,26 @@ impl<const MQ: u64> GF255<MQ> {
                     b.set_mul(&win[k - 1]);
                 }
             }
-            y = (*self) * b * (self.mul2() * b.square() - Self::ONE);
+
+            // Compute c = 2*x*b^2.
+            let c = self.mul2() * b.square();
+
+            // We really computed c = (2*x)^((q-1)/4), which is a square
+            // root of the Legendre symbol of 2*x. With q = 5 mod 8, 2 is
+            // not a square. Thus, if the square root of x exists, then c is
+            // a square root of -1 (except if x = 0, in which case c = 0).
+            // Otherwise, c = 1 or -1.
+            // We compute y = x*b*(c' - 1); then:
+            //   y^2 = x*c*(c' - 1)^2/2
+            // If c = i or -i, then using c = c' (as mandated by Atkin's
+            // formulas) yields c*(c - 1)^2/2 = 1, i.e. y^2 = x, which is
+            // the expected result.
+            // If c = 1 or -1, then we set c' = 3, so that c*(c' - 1)^2/2
+            // is equal to 2 or -2, and y^2 = 2*x or -2*x.
+            let mut cp = c;
+            let ff = c.equals(Self::ONE) | c.equals(Self::MINUS_ONE);
+            cp.set_cond(&Self::w64le(3, 0, 0, 0), ff);
+            y = (*self) * b * (cp - Self::ONE);
         } else {
             // General case is Tonelli-Shanks but it requires knowledge
             // of a non-QR in the field, which we don't provide in the
@@ -1293,13 +1313,22 @@ impl<const MQ: u64> GF255<MQ> {
 
         // Normalize y and negate it if necessary to set the low bit to 0.
         y.set_normalized();
-        y.set_cond(&-y, (y.0[0] & 1).wrapping_neg());
+        y.set_cond(&-y, ((y.0[0] as u32) & 1).wrapping_neg());
 
-        // Check that the candidate is indeed a square root; if not,
-        // clear it.
+        // Check that the candidate is indeed a square root.
         let r = y.square().equals(*self);
-        y.set_cond(&Self::ZERO, !r);
         *self = y;
+        r
+    }
+
+    // Set this value to its square root. Returned value is 0xFFFFFFFF
+    // if the operation succeeded (value was indeed a quadratic
+    // residue), 0 otherwise (value was not a quadratic residue). This
+    // differs from set_sqrt_ext() in that this function sets the value
+    // to zero if there is no square root.
+    fn set_sqrt(&mut self) -> u32 {
+        let r = self.set_sqrt_ext();
+        self.set_cond(&Self::ZERO, !r);
         r
     }
 
@@ -1313,6 +1342,22 @@ impl<const MQ: u64> GF255<MQ> {
     pub fn sqrt(self) -> (Self, u32) {
         let mut x = self;
         let r = x.set_sqrt();
+        (x, r)
+    }
+
+    // Compute the square root of this value. Returned value are (y, r):
+    //  - If this value is indeed a quadratic residue, then y is a
+    //    square root of this value, and r is 0xFFFFFFFF.
+    //  - If this value is not a quadratic residue, then y is set to
+    //    a square root of -x (if modulus q = 3 mod 4), or to a square
+    //    root of either 2*x or -2*x (if modulus q = 5 mod 8); morever,
+    //    r is set to 0x00000000.
+    // In all cases, the returned root is normalized: the lest significant
+    // bit of its integer representation (in the 0..q-1 range) is 0.
+    #[inline(always)]
+    pub fn sqrt_ext(self) -> (Self, u32) {
+        let mut x = self;
+        let r = x.set_sqrt_ext();
         (x, r)
     }
 
@@ -2065,9 +2110,27 @@ mod tests {
             assert!(r == 0xFFFFFFFF);
             assert!(t.square().equals(s) == 0xFFFFFFFF);
             assert!((t.encode32()[0] & 1) == 0);
+            let (t, r) = s.sqrt_ext();
+            assert!(r == 0xFFFFFFFF);
+            assert!(t.square().equals(s) == 0xFFFFFFFF);
+            assert!((t.encode32()[0] & 1) == 0);
             let (t2, r) = s2.sqrt();
             assert!(r == 0);
             assert!(t2.iszero() == 0xFFFFFFFF);
+            let (t2, r) = s2.sqrt_ext();
+            assert!(r == 0);
+            if (MQ & 3) == 1 {
+                // q = 3 mod 4, we are supposed to get a square root of -s2
+                assert!(t2.square().equals(-s2) == 0xFFFFFFFF);
+            } else if (MQ & 7) == 3 {
+                // q = 5 mod 8, we are supposed to get a square root of
+                // 2*s2 or -2*s2
+                let y = t2.square();
+                let z = s2.mul2();
+                assert!((y.equals(z) | y.equals(-z)) == 0xFFFFFFFF);
+            } else {
+                unimplemented!();
+            }
 
             let a = GF255::<MQ>::decode_reduce(&va);
             let (c0, c1) = a.split_vartime();
