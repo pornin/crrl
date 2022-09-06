@@ -84,6 +84,16 @@ pub struct Point {
 pub type Scalar = ModInt256<0xDCF2AC65396152C7, 0x2ACF567A912B7F03,
                             0x0000000000000000, 0x4000000000000000>;
 
+impl Scalar {
+    /// Scalar encoding length (in bytes).
+    pub const ENC_LEN: usize = 32;
+
+    /// Encodes a scalar element into bytes (little-endian).
+    pub fn encode(self) -> [u8; 32] {
+        self.encode32()
+    }
+}
+
 impl Point {
 
     /// The group neutral element.
@@ -180,9 +190,9 @@ impl Point {
         // - Encode the u coordinate of that point.
         let iZ = GF255s::ONE / self.Z;
         let mut u = self.U * iZ;
-        let sgn = (((self.E * iZ).encode32()[0] & 1) as u32).wrapping_neg();
+        let sgn = (((self.E * iZ).encode()[0] & 1) as u32).wrapping_neg();
         u.set_cond(&-u, sgn);
-        u.encode32()
+        u.encode()
     }
 
     /// Creates a point by converting a point in extended affine
@@ -621,7 +631,7 @@ impl Point {
     /// Each digit is in -15..+16, top digit is 0 or 1.
     fn recode_scalar(n: &Scalar) -> [i8; 52] {
         let mut sd = [0i8; 52];
-        let bb = n.encode32();
+        let bb = n.encode();
         let mut cc: u32 = 0;       // carry from lower digits
         let mut i: usize = 0;      // index of next source byte
         let mut acc: u32 = 0;      // buffered bits
@@ -792,7 +802,7 @@ impl Point {
         // Since r < 2^255, only 256 digits are necessary at most.
 
         let mut sd = [0i8; 256];
-        let bb = n.encode32();
+        let bb = n.encode();
         let mut x = bb[0] as u32;
         for i in 0..256 {
             if (i & 7) == 4 && i < 252 {
@@ -1364,7 +1374,7 @@ impl PrivateKey {
     ///
     /// This encodes the private scalar into exactly 32 bytes.
     pub fn encode(self) -> [u8; 32] {
-        self.sec.encode32()
+        self.sec.encode()
     }
 
     /// Signs a message with this private key.
@@ -1442,7 +1452,7 @@ impl PrivateKey {
         // negligible bias because the jq255s order is close enough to
         // a power of 2.
         let mut sh = Blake2s256::new();
-        sh.update(&self.sec.encode32());
+        sh.update(&self.sec.encode());
         sh.update(&self.public_key.encoded);
         sh.update(&(seed.len() as u64).to_le_bytes());
         sh.update(seed);
@@ -1462,7 +1472,7 @@ impl PrivateKey {
         let s = k + self.sec * Scalar::from_u128(u128::from_le_bytes(cb));
         let mut sig = [0u8; 48];
         sig[ 0..16].copy_from_slice(&cb);
-        sig[16..48].copy_from_slice(&s.encode32());
+        sig[16..48].copy_from_slice(&s.encode());
         sig
     }
 
@@ -1490,7 +1500,7 @@ impl PrivateKey {
         // but still appears to be deterministic relatively to the
         // received peer bytes.
         let mut shared = (self.sec * Q).encode();
-        let alt = self.sec.encode32();
+        let alt = self.sec.encode();
         let z = (!ok) as u8;
         for i in 0..32 {
             shared[i] ^= z & (shared[i] ^ alt[i]);
@@ -2253,7 +2263,7 @@ mod tests {
 
     fn print_gf(name: &str, x: GF255s) {
         print!("{} = 0x", name);
-        let bb = x.encode32();
+        let bb = x.encode();
         for i in (0..32).rev() {
             print!("{:02X}", bb[i]);
         }

@@ -84,7 +84,7 @@ impl Point {
     /// This is returned here as a `u32` value with the usual pattern
     /// (0xFFFFFFFF for negative, 0x00000000 for nonnegative).
     fn is_negative(x: GF25519) -> u32 {
-        ((x.encode32()[0] & 1) as u32).wrapping_neg()
+        ((x.encode()[0] & 1) as u32).wrapping_neg()
     }
 
     /// Gets the "absolute value" of a field element.
@@ -232,7 +232,7 @@ impl Point {
 
         let s = Self::abs(den_inv * (z - y));
 
-        s.encode32()
+        s.encode()
     }
 
     /// Compares two points for equality.
@@ -751,7 +751,7 @@ mod tests {
 
     fn print_gf(name: &str, x: GF25519) {
         print!("{} = 0x", name);
-        let bb = x.encode32();
+        let bb = x.encode();
         for i in (0..32).rev() {
             print!("{:02X}", bb[i]);
         }

@@ -22,3 +22,53 @@ pub type GF255s = GF255<3957>;
 /// (base field for NIST curve P-256).
 pub type GFp256 = ModInt256<0xFFFFFFFFFFFFFFFF, 0x00000000FFFFFFFF,
                             0x0000000000000000, 0xFFFFFFFF00000001>;
+
+impl GF25519 {
+    /// Field element encoding length (in bytes).
+    pub const ENC_LEN: usize = 32;
+
+    /// Encodes a field element into bytes (little-endian).
+    pub fn encode(self) -> [u8; 32] {
+        self.encode32()
+    }
+}
+
+impl GF255e {
+    /// Field element encoding length (in bytes).
+    pub const ENC_LEN: usize = 32;
+
+    /// Encodes a field element into bytes (little-endian).
+    pub fn encode(self) -> [u8; 32] {
+        self.encode32()
+    }
+}
+
+impl GF255s {
+    /// Field element encoding length (in bytes).
+    pub const ENC_LEN: usize = 32;
+
+    /// Encodes a field element into bytes (little-endian).
+    pub fn encode(self) -> [u8; 32] {
+        self.encode32()
+    }
+}
+
+impl GFp256 {
+    /// Field element encoding length (in bytes).
+    pub const ENC_LEN: usize = 32;
+
+    /// Encodes a field element into bytes (little-endian).
+    pub fn encode(self) -> [u8; 32] {
+        self.encode32()
+    }
+}
+
+impl GFsecp256k1 {
+    /// Field element encoding length (in bytes).
+    pub const ENC_LEN: usize = 32;
+
+    /// Encodes a field element into bytes (little-endian).
+    pub fn encode(self) -> [u8; 32] {
+        self.encode32()
+    }
+}

@@ -88,7 +88,7 @@ pub fn x25519(point: &[u8; 32], scalar: &[u8; 32]) -> [u8; 32] {
     GF25519::cswap(&mut x2, &mut x3, swap);
     GF25519::cswap(&mut z2, &mut z3, swap);
 
-    (x2 / z2).encode32()
+    (x2 / z2).encode()
 }
 
 /// Specialized version of X25519, when applied to the conventional
@@ -110,7 +110,7 @@ pub fn x25519_base(scalar: &[u8; 32]) -> [u8; 32] {
     // Apply the birational map to get the Montgomery point (u coordinate
     // only). When the point is the neutral, we want to return 0.
     let u = P.to_montgomery_u();
-    u.encode32()
+    u.encode()
 }
 
 // ========================================================================

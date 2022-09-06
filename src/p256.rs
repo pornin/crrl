@@ -135,6 +135,16 @@ pub struct Point {
 pub type Scalar = ModInt256<0xF3B9CAC2FC632551, 0xBCE6FAADA7179E84,
                             0xFFFFFFFFFFFFFFFF, 0xFFFFFFFF00000000>;
 
+impl Scalar {
+    /// Scalar encoding length (in bytes).
+    pub const ENC_LEN: usize = 32;
+
+    /// Encodes a scalar element into bytes (little-endian).
+    pub fn encode(self) -> [u8; 32] {
+        self.encode32()
+    }
+}
+
 /// Reverses a 32-byte sequence (i.e. switches between big-endian and
 /// little-endian conventions).
 ///
@@ -297,7 +307,7 @@ impl Point {
             // first encoding byte. Note that there is no valid point with
             // y = 0, thus we do not have to check that the sign is correct
             // after the conditional negation.
-            let yb = y.encode32()[0];
+            let yb = y.encode()[0];
             let ws = (((yb ^ buf[0]) & 0x01) as u32).wrapping_neg();
             y.set_cond(&-y, ws);
 
@@ -383,8 +393,8 @@ impl Point {
         let x = self.X * iZ;  // 0 for the neutral
         let y = self.Y * iZ;  // 0 for the neutral
         let mut b = [0u8; 33];
-        b[0] = ((y.encode32()[0] & 0x01) | 0x02) & (r as u8);
-        b[1..33].copy_from_slice(&bswap32(&x.encode32()));
+        b[0] = ((y.encode()[0] & 0x01) | 0x02) & (r as u8);
+        b[1..33].copy_from_slice(&bswap32(&x.encode()));
         b
     }
 
@@ -401,8 +411,8 @@ impl Point {
         let y = self.Y * iZ;  // 0 for the neutral
         let mut b = [0u8; 65];
         b[0] = 0x04 & (r as u8);
-        b[ 1..33].copy_from_slice(&bswap32(&x.encode32()));
-        b[33..65].copy_from_slice(&bswap32(&y.encode32()));
+        b[ 1..33].copy_from_slice(&bswap32(&x.encode()));
+        b[33..65].copy_from_slice(&bswap32(&y.encode()));
         b
     }
 
@@ -830,7 +840,7 @@ impl Point {
     /// Each digit is in -15..+16, top digit is in 0..+2.
     fn recode_scalar(n: &Scalar) -> [i8; 52] {
         let mut sd = [0i8; 52];
-        let bb = n.encode32();
+        let bb = n.encode();
         let mut cc: u32 = 0;       // carry from lower digits
         let mut i: usize = 0;      // index of next source byte
         let mut acc: u32 = 0;      // buffered bits
@@ -1018,7 +1028,7 @@ impl Point {
         // Since a scalar fits on 256 bits, at most 257 digits are needed.
 
         let mut sd = [0i8; 257];
-        let bb = n.encode32();
+        let bb = n.encode();
         let mut x = bb[0] as u32;
         for i in 0..257 {
             if (i & 7) == 4 && i < 252 {
@@ -1756,7 +1766,7 @@ impl PrivateKey {
     /// Encoding uses the unsigned big-endian convention, as per SEC1 and
     /// RFC 5915.
     pub fn encode(self) -> [u8; 32] {
-        let buf = self.x.encode32();
+        let buf = self.x.encode();
         bswap32(&buf)
     }
 
@@ -1852,10 +1862,10 @@ impl PrivateKey {
             tmp[(32 - hv.len())..32].copy_from_slice(hv);
         }
         let h = Scalar::decode_reduce(&bswap32(&tmp));
-        let hb = bswap32(&h.encode32());
+        let hb = bswap32(&h.encode());
 
         // Get the byte representation of the private key itself.
-        let xb = bswap32(&self.x.encode32());
+        let xb = bswap32(&self.x.encode());
 
         // Generate a pseudorandom k as per RFC 6979, section 3.2.
         let mut sh = Sha256::new();
@@ -1919,8 +1929,8 @@ impl PrivateKey {
                 // If s and r are both non-zero, then we have our signature.
                 if (r.iszero() | s.iszero()) == 0 {
                     let mut sig = [0u8; 64];
-                    sig[..32].copy_from_slice(&bswap32(&r.encode32()));
-                    sig[32..].copy_from_slice(&bswap32(&s.encode32()));
+                    sig[..32].copy_from_slice(&bswap32(&r.encode()));
+                    sig[32..].copy_from_slice(&bswap32(&s.encode()));
                     return sig;
                 }
             }
@@ -2273,7 +2283,7 @@ impl PublicKey {
         for i in 0..Ui.len() {
             let mut tmp = [0u8; 8];
             tmp[0..2].copy_from_slice(&(i as u16).to_le_bytes());
-            tmp[2..8].copy_from_slice(&Ui[i].encode32()[0..6]);
+            tmp[2..8].copy_from_slice(&Ui[i].encode()[0..6]);
             ux.push(u64::from_le_bytes(tmp));
         }
         ux.sort();
@@ -2300,7 +2310,7 @@ impl PublicKey {
                 let mut tmp = [0u8; 8];
                 tmp[0] = 0xFF;
                 tmp[1] = 0xFF;
-                tmp[2..8].copy_from_slice(&Vj[j].encode32()[0..6]);
+                tmp[2..8].copy_from_slice(&Vj[j].encode()[0..6]);
                 let x = u64::from_le_bytes(tmp);
 
                 // Perform a search in ux[].
@@ -2363,7 +2373,7 @@ impl PublicKey {
                         };
                         // sig2[] already contains r, we just have to encode
                         // the complete s in it.
-                        sig2[32..64].copy_from_slice(&bswap32(&s.encode32()));
+                        sig2[32..64].copy_from_slice(&bswap32(&s.encode()));
                         return Some(sig2);
                     }
 
@@ -2752,7 +2762,7 @@ mod tests {
     /* unused
     fn print_gf(name: &str, x: GFp256) {
         print!("{} = 0x", name);
-        let bb = x.encode32();
+        let bb = x.encode();
         for i in (0..32).rev() {
             print!("{:02X}", bb[i]);
         }
@@ -2768,7 +2778,7 @@ mod tests {
 
     fn print_sc(name: &str, x: Scalar) {
         print!("{} = 0x", name);
-        let bb = x.encode32();
+        let bb = x.encode();
         for i in (0..32).rev() {
             print!("{:02X}", bb[i]);
         }

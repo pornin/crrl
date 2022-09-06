@@ -121,6 +121,16 @@ pub struct Point {
 pub type Scalar = ModInt256<0x5812631A5CF5D3ED, 0x14DEF9DEA2F79CD6,
                             0x0000000000000000, 0x1000000000000000>;
 
+impl Scalar {
+    /// Scalar encoding length (in bytes).
+    pub const ENC_LEN: usize = 32;
+
+    /// Encodes a scalar element into bytes (little-endian).
+    pub fn encode(self) -> [u8; 32] {
+        self.encode32()
+    }
+}
+
 impl Point {
 
     /// The group neutral (identity point) in the curve.
@@ -256,7 +266,7 @@ impl Point {
         // If the sign bit of x does not match the specified bit, then
         // negate x. This may induce a failure if x == 0 and the requested
         // sign bit is 1.
-        let nx = (((x.encode32()[0] & 0x01) ^ sign_x) as u32).wrapping_neg();
+        let nx = (((x.encode()[0] & 0x01) ^ sign_x) as u32).wrapping_neg();
         r &= !(x.iszero() & nx);
         x.set_cond(&-x, nx);
 
@@ -295,8 +305,8 @@ impl Point {
     pub fn encode(self) -> [u8; 32] {
         let iZ = GF25519::ONE / self.Z;
         let (x, y) = (self.X * iZ, self.Y * iZ);
-        let mut r = y.encode32();
-        r[31] |= x.encode32()[0] << 7;
+        let mut r = y.encode();
+        r[31] |= x.encode()[0] << 7;
         r
     }
 
@@ -862,7 +872,7 @@ impl Point {
     /// Each digit is in -15..+16, top digit is in 0..+4.
     fn recode_scalar(n: &Scalar) -> [i8; 51] {
         let mut sd = [0i8; 51];
-        let bb = n.encode32();
+        let bb = n.encode();
         let mut cc: u32 = 0;       // carry from lower digits
         let mut i: usize = 0;      // index of next source byte
         let mut acc: u32 = 0;      // buffered bits
@@ -1034,7 +1044,7 @@ impl Point {
         // Since L < 2^253, only 254 digits are necessary at most.
 
         let mut sd = [0i8; 254];
-        let bb = n.encode32();
+        let bb = n.encode();
         let mut x = bb[0] as u32;
         for i in 0..254 {
             if (i & 7) == 4 && i < 252 {
@@ -1766,7 +1776,7 @@ impl PrivateKey {
         // Signature is (R, S) with S = r + k*s mod L
         let mut sig = [0u8; 64];
         sig[0..32].copy_from_slice(&R_enc);
-        sig[32..64].copy_from_slice(&(r + k * self.s).encode32());
+        sig[32..64].copy_from_slice(&(r + k * self.s).encode());
 
         sig
     }
@@ -2218,7 +2228,7 @@ impl PublicKey {
                 let mut tmp = [0u8; 8];
                 tmp[0] = 0xFF;
                 tmp[1] = 0xFF;
-                tmp[2..8].copy_from_slice(&Xi[i0].encode32()[0..6]);
+                tmp[2..8].copy_from_slice(&Xi[i0].encode()[0..6]);
                 let x = u64::from_le_bytes(tmp);
 
                 // Look for y in the array: we look for the largest value
@@ -2283,7 +2293,7 @@ impl PublicKey {
     fn make_sig(R_enc: &[u8], s: &Scalar) -> [u8; 64] {
         let mut sig = [0u8; 64];
         sig[0..32].copy_from_slice(R_enc);
-        sig[32..64].copy_from_slice(&s.encode32()[..]);
+        sig[32..64].copy_from_slice(&s.encode()[..]);
         sig
     }
 }
@@ -8270,7 +8280,7 @@ mod tests {
 
     fn print_gf(name: &str, x: GF25519) {
         print!("{} = 0x", name);
-        let bb = x.encode32();
+        let bb = x.encode();
         for i in (0..32).rev() {
             print!("{:02X}", bb[i]);
         }
