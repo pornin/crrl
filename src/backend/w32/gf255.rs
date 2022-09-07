@@ -2143,8 +2143,6 @@ mod tests {
 
             let a = GF255::<MQ>::decode_reduce(&va);
             let (c0, c1) = a.split_vartime();
-            println!("c0 = {}", c0);
-            println!("c1 = {}", c1);
             let b0 = GF255::<MQ>::from_i128(c0);
             let b1 = GF255::<MQ>::from_i128(c1);
             let mut ok = false;

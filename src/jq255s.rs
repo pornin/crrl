@@ -2781,7 +2781,6 @@ mod tests {
             let buf2 = hex::decode(KAT_MAP_TO_CURVE[i][1]).unwrap();
             let f = GF255s::decode_reduce(&buf1);
             let Q = Point::map_to_curve(&f);
-            println!("i = {}", i);
             assert!(Q.encode()[..] == buf2);
         }
     }
