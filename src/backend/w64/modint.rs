@@ -41,7 +41,7 @@ impl<const M0: u64, const M1: u64, const M2: u64, const M3: u64> ModInt256<M0, M
     const M0I: u64 = Self::make_m0i(M0);
     const HMP1: Self = Self::make_hmp1();
     const R2: Self = Self::make_r2();
-    const T772: Self = Self::make_t772();
+    const T770: Self = Self::make_t770();
     const T64: Self = Self::w64le(0, 1, 0, 0);
     const T128: Self = Self::w64le(0, 0, 1, 0);
 
@@ -1169,8 +1169,8 @@ impl<const M0: u64, const M1: u64, const M2: u64, const M3: u64> ModInt256<M0, M
         }
 
         // If y is invertible, then the final GCD is 1, and
-        // len(a) + len(b) <= 45, so we can end the computation with
-        // the low words directly. We only need 43 iterations to reach
+        // len(a) + len(b) <= 47, so we can end the computation with
+        // the low words directly. We only need 45 iterations to reach
         // the point where b = 1.
         let mut xa = a.0[0];
         let mut xb = b.0[0];
@@ -1178,7 +1178,7 @@ impl<const M0: u64, const M1: u64, const M2: u64, const M3: u64> ModInt256<M0, M
         let mut g0 = 0u64;
         let mut f1 = 0u64;
         let mut g1 = 1u64;
-        for _ in 0..43 {
+        for _ in 0..45 {
             let a_odd = (xa & 1).wrapping_neg();
             let (_, cc) = subborrow_u64(xa, xb, 0);
             let swap = a_odd & (cc as u64).wrapping_neg();
@@ -1213,19 +1213,19 @@ impl<const M0: u64, const M1: u64, const M2: u64, const M3: u64> ModInt256<M0, M
 
         // At this point, each outer iteration injected 31 extra doublings,
         // except for the last one which injected 43, for a total of
-        // 31*15 + 43 = 508. But each call to montylin() also implied a
+        // 31*15 + 45 = 510. But each call to montylin() also implied a
         // division by 2^64, and there were 16 calls; thus, we really
-        // divided the result by 2^(16*64-508) = 2^516.
+        // divided the result by 2^(16*64-510) = 2^514.
         //
         // Moreover, both divisor and dividend were in Montgomery
         // representation; we thus computed in total:
-        //   ((x*R)/(y*R))/2^516 = (x/y)/2^516
+        //   ((x*R)/(y*R))/2^514 = (x/y)/2^514
         // We want to Montgomery representation of the result, i.e.:
         //   (x/y)*2^256
-        // We thus need to multiply by 2^(516+256) = 2^772, which we
+        // We thus need to multiply by 2^(514+256) = 2^770, which we
         // do with a Montgomery multiplication with the precomputed
-        // Montgomery representation of 2^772.
-        self.set_mul(&Self::T772);
+        // Montgomery representation of 2^770.
+        self.set_mul(&Self::T770);
     }
 
     // Perform a batch inversion of some elements. All elements of
@@ -1282,7 +1282,7 @@ impl<const M0: u64, const M1: u64, const M2: u64, const M3: u64> ModInt256<M0, M
         //    recomputation step for the next 2.
         // Otherwise, the 'a' and 'b' values are modified exactly as in
         // the binary GCD, so that we get the same guaranteed convergence
-        // in a total of 508 iterations.
+        // in a total of 510 iterations.
 
         let mut a = self;
         let mut b = Self([ M0, M1, M2, M3 ]);
@@ -1388,14 +1388,14 @@ impl<const M0: u64, const M1: u64, const M2: u64, const M3: u64> ModInt256<M0, M
             b = nb;
         }
 
-        // Final iterations: values are at most 45 bits now. We do not
+        // Final iterations: values are at most 47 bits now. We do not
         // need to keep track of update coefficients. Just like the GCD,
-        // we need only 43 iterations, because after 43 iterations,
+        // we need only 45 iterations, because after 45 iterations,
         // value a is 0 or 1, and b is 1, and no further modification to
         // the Legendre symbol may happen.
         let mut xa = a.0[0];
         let mut xb = b.0[0];
-        for _ in 0..43 {
+        for _ in 0..45 {
             let a_odd = (xa & 1).wrapping_neg();
             let (_, cc) = subborrow_u64(xa, xb, 0);
             let swap = a_odd & (cc as u64).wrapping_neg();
@@ -1518,12 +1518,12 @@ impl<const M0: u64, const M1: u64, const M2: u64, const M3: u64> ModInt256<M0, M
     // element is such that |c0| and |c1| are both lower than about
     // 1.075*2^128; thus, given the truncated c0 and c1 returned by this
     // function, one can find the real values by trying all combinations
-    // (c0 + a*2^128) / (c1 + b*2^128) for a and b both ranging from -2
-    // to +2 (values -2 and +2 being, in practice, very rare for random
-    // inputs).
+    // (c0 + a*2^128) / (c1 + b*2^128) for a and b both ranging from -1
+    // to +1.
     //
     // If this element is zero, then this function returns (0, 1). Otherwise,
-    // neither c0 nor c1 can be zero.
+    // neither c0 nor c1 can be zero (though the _truncated_ version of c0
+    // or c1 may be zero, if the modulus is large enough).
     //
     // THIS FUNCTION IS NOT CONSTANT-TIME. It shall be used only for a
     // public source element.
@@ -1882,9 +1882,9 @@ impl<const M0: u64, const M1: u64, const M2: u64, const M3: u64> ModInt256<M0, M
         r
     }
 
-    // Compute the Montgomery representation of 2^772 (compile-time).
-    const fn make_t772() -> Self {
-        let r = Self::const_mmul(Self([ 16, 0, 0, 0 ]), Self::R2);
+    // Compute the Montgomery representation of 2^770 (compile-time).
+    const fn make_t770() -> Self {
+        let r = Self::const_mmul(Self([ 4, 0, 0, 0 ]), Self::R2);
         let r = Self::const_mmul(r, Self::R2);
         let r = Self::const_mmul(r, Self::R2);
         let r = Self::const_mmul(r, Self::R2);
@@ -2453,11 +2453,9 @@ mod tests {
         let xnqr = ModInt256::<M0, M1, M2, M3>::w64le(nqr as u64, 0, 0, 0);
         let tt = ModInt256::<M0, M1, M2, M3>::w64le(0, 0, 1, 0);
         let corr128 = [
-            -tt.mul2(),
             -tt,
             ModInt256::<M0, M1, M2, M3>::ZERO,
             tt,
-            tt.mul2(),
         ];
         for i in 0..300 {
             sh.update(((3 * i + 0) as u64).to_le_bytes());
@@ -2488,9 +2486,9 @@ mod tests {
             let b0 = ModInt256::<M0, M1, M2, M3>::from_i128(c0);
             let b1 = ModInt256::<M0, M1, M2, M3>::from_i128(c1);
             let mut ok = false;
-            for k1 in 0..5 {
+            for k1 in 0..3 {
                 let ah = a * (b1 + corr128[k1]);
-                for k0 in 0..5 {
+                for k0 in 0..3 {
                     if ah.equals(b0 + corr128[k0]) == 0xFFFFFFFF {
                         ok = true;
                     }
@@ -2567,5 +2565,16 @@ mod tests {
                 assert!((xx[i] * yy[i]).equals(GF::ONE) == 0xFFFFFFFF);
             }
         }
+    }
+
+    #[test]
+    fn ttinv() {
+        type GF = ModInt256<0xF3B9CAC2FC632551, 0xBCE6FAADA7179E84,
+                            0xFFFFFFFFFFFFFFFF, 0xFFFFFFFF00000000>;
+        let num = GF::from_u32(1);
+        let den = -GF::from_u32(3);
+        let r = num / den;
+        assert!(r.iszero() == 0);
+        assert!((-r * GF::w64be(0, 0, 0, 3)).equals(GF::ONE) != 0);
     }
 }
