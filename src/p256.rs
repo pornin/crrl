@@ -1044,6 +1044,39 @@ impl Point {
         sd
     }
 
+    /// 5-bit wNAF recoding of a nonnegative 129-bit integer.
+    ///
+    /// This function works for all integers less than 2^129 - 16.
+    /// The integer is provided as a high part (nh, 1 bit) and a low
+    /// part (nl, 128 bits). 130 digits are produced. Non-zero digits have
+    /// an odd value, between -15 and +15 (inclusive).
+    /// (The recoding is constant-time, but use of wNAF is inherently
+    /// non-constant-time.)
+    fn recode_u129_NAF(nh: u32, nl: u128) -> [i8; 130] {
+        // See recode_scalar_NAF() for details.
+        let mut sd = [0i8; 130];
+        let mut y = nl;
+
+        // Specialize the first step so that we may inject the extra top bit.
+        let x = y as u32;
+        let m = (x & 1).wrapping_neg();  // -1 if x is odd, 0 otherwise
+        let v = x & m & 31;              // low 5 bits if x odd, or 0
+        let c = (v & 16) << 1;           // carry (0 or 32)
+        sd[0] = v.wrapping_sub(c) as i8;
+        y = (y.wrapping_sub(v as u128) >> 1).wrapping_add((nh as u128) << 127);
+        y = y.wrapping_add((c >> 1) as u128);  // no overflow if n < 2^129 - 16
+
+        for i in 1..130 {
+            let x = y as u32;
+            let m = (x & 1).wrapping_neg();  // -1 if x is odd, 0 otherwise
+            let v = x & m & 31;              // low 5 bits if x odd, or 0
+            let c = (v & 16) << 1;           // carry (0 or 32)
+            sd[i] = v.wrapping_sub(c) as i8;
+            y = y.wrapping_sub(v as u128).wrapping_add(c as u128) >> 1;
+        }
+        sd
+    }
+
     /// Given scalars `u` and `v`, sets this point to `u*self + v*G`
     /// (with `G` being the conventional generator point, aka
     /// `Self::BASE`).
@@ -1130,6 +1163,177 @@ impl Point {
         let mut R = self;
         R.set_mul_add_mulgen_vartime(u, v);
         R
+    }
+
+    /// Check whether `s*G = R + k*Q`, for the provided scalars `s`
+    /// and `k`, provided points `Q` (`self`) and `R`, and conventional
+    /// generator `G`.
+    ///
+    /// Returned value is true on match, false otherwise. This function
+    /// is meant to support Schnorr signature verification (e.g. as defined
+    /// in FROST).
+    ///
+    /// THIS FUNCTION IS NOT CONSTANT-TIME; it shall be used only with
+    /// public data.
+    pub fn verify_helper_vartime(self,
+        R: &Point, s: &Scalar, k: &Scalar) -> bool
+    {
+        // We want to compute:
+        //   T = s*G - R - k*Q
+        // and check that T = 0. We split k into a fraction of smaller
+        // integers:
+        //   k = c0/c1
+        // with c1 != 0. We can then instead verify that:
+        //   0 = (s*c1)*G - c1*R - c0*Q
+        // If we write s*c1 = s0 + s1*2^130 (with s0 and s1 being
+        // "half-size"), then we end up with computing:
+        //   0 = s0*G + s1*(2^130*G) + c1*(-R) + c0*(-Q)
+        // which is a linear combination with only half-size scalars.
+        //
+        // A complication is that Scalar::split_vartime() truncates the
+        // values c0 and c1 to 128 bits (including sign), so that we
+        // have in fact 5 possible values for each. We must first find
+        // out the "real" c0 and c1 (up to 130 bits each).
+
+        // Split the scalar k. The real c0 and c1 are c0+a*2^128 and
+        // c1+b*2^128 for two integers a and b in {-1,0,+1};
+        // this means that a - k*b = (k*c1 - c0)/2^128. We first compute
+        // the right-hand side of that equation, then enumerate the
+        // possible values for the left-hand size until a match is found.
+        const T128: Scalar = Scalar::w64be(0, 1, 0, 0);
+        const INV_T128: Scalar = Scalar::w64be(
+            0x48C9440834AB8EDC, 0x982639CE9EA3C688,
+            0xCBBD4262B843B209, 0x3CB8EB5DA1D57E2A);
+        let (c0, c1) = k.split_vartime();
+        let kr = (k * Scalar::from_i128(c1) - Scalar::from_i128(c0)) * INV_T128;
+        let mut a = -1i32;
+        let mut va = Scalar::MINUS_ONE;
+        let mut b = -100i32;
+        for _ in 0..3 {
+            if (va - k).equals(kr) != 0 {
+                b = 1;
+                break;
+            }
+            if va.equals(kr) != 0 {
+                b = 0;
+                break;
+            }
+            if (va + k).equals(kr) != 0 {
+                b = -1;
+                break;
+            }
+            a += 1;
+            va += Scalar::ONE;
+        }
+
+        // Normally the process above cannot fail.
+        assert!(b != -100);
+
+        // Normalize the coefficients over 32+128 bits (two's complement
+        // notation).
+        let c0h = (a as u32).wrapping_add((c0 >> 127) as u32);
+        let c0l = c0 as u128;
+        let c1h = (b as u32).wrapping_add((c1 >> 127) as u32);
+        let c1l = c1 as u128;
+
+        // Adjust signs so that we have nonnegative multipliers.
+        let (P1, d1h, d1l) = if (c1h >> 31) != 0 {
+            (*R, !c1h.wrapping_add((c1l == 0) as u32), c1l.wrapping_neg())
+        } else {
+            (-R, c1h, c1l)
+        };
+        let (P2, d2h, d2l) = if (c0h >> 31) != 0 {
+            (self, !c0h.wrapping_add((c0l == 0) as u32), c0l.wrapping_neg())
+        } else {
+            (-self, c0h, c0l)
+        };
+        let ss = s * (T128 * Scalar::from_i32(c1h as i32)
+            + Scalar::from_u128(c1l));
+
+        // Recode coefficients in 5-NAF. sd3 has 257 digits; sd1 and sd2 have
+        // 130 digits each (since the nonnegative d0 and d1 values are at
+        // most about 1.075*2^128).
+        let sd1 = Self::recode_u129_NAF(d1h, d1l);
+        let sd2 = Self::recode_u129_NAF(d2h, d2l);
+        let sd3 = Self::recode_scalar_NAF(&ss);
+
+        // Compute windows for points P1 and P2:
+        //   win1[i] = (2*i+1)*P1    (i = 0 to 7)
+        //   win2[i] = (2*i+1)*P2    (i = 0 to 7)
+        let Q1 = P1.double();
+        let Q2 = P2.double();
+        let mut win1 = [Self::NEUTRAL; 8];
+        let mut win2 = [Self::NEUTRAL; 8];
+        win1[0] = P1;
+        win2[0] = P2;
+        for i in 1..8 {
+            win1[i] = win1[i - 1] + Q1;
+            win2[i] = win2[i - 1] + Q2;
+        }
+
+        // zz = true as long as the accumulator is the neutral; this
+        // allows skipping the first sequence of doublings.
+        let mut T = Self::NEUTRAL;
+        let mut zz = true;
+        let mut ndbl = 0u32;
+        for i in (0..130).rev() {
+            // We have one more doubling to perform.
+            ndbl += 1;
+
+            // Get next digits. If they are all zeros, then we can loop
+            // immediately.
+            let e1 = sd1[i];
+            let e2 = sd2[i];
+            let e3 = sd3[i];
+            let e4 = if i < 127 { sd3[i + 130] } else { 0 };
+            if ((e1 as u32) | (e2 as u32) | (e3 as u32) | (e4 as u32)) == 0 {
+                continue;
+            }
+
+            // Apply accumulated doubles.
+            if zz {
+                zz = false;
+            } else {
+                T.set_xdouble(ndbl);
+            }
+            ndbl = 0u32;
+
+            // Process digits.
+            if e1 != 0 {
+                if e1 > 0 {
+                    T.set_add(&win1[e1 as usize >> 1]);
+                } else {
+                    T.set_sub(&win1[(-e1) as usize >> 1]);
+                }
+            }
+            if e2 != 0 {
+                if e2 > 0 {
+                    T.set_add(&win2[e2 as usize >> 1]);
+                } else {
+                    T.set_sub(&win2[(-e2) as usize >> 1]);
+                }
+            }
+            if e3 != 0 {
+                if e3 > 0 {
+                    T.set_add_affine(&PRECOMP_G[e3 as usize - 1], 0);
+                } else {
+                    T.set_sub_affine(&PRECOMP_G[(-e3) as usize - 1], 0);
+                }
+            }
+            if e4 != 0 {
+                if e4 > 0 {
+                    T.set_add_affine(&PRECOMP_G130[e4 as usize - 1], 0);
+                } else {
+                    T.set_sub_affine(&PRECOMP_G130[(-e4) as usize - 1], 0);
+                }
+            }
+        }
+
+        // The verification equation is fulfilled if we get the neutral
+        // as final result. We do not have to perform the final buffered
+        // doublings since that would not change whether the result is
+        // the neutral.
+        T.isneutral() != 0
     }
 
     /// From points P0 and P1, returns the affine x coordinates of P0, P1
@@ -3083,6 +3287,33 @@ mod tests {
             let R1 = u * A + Point::mulgen(&v);
             let R2 = A.mul_add_mulgen_vartime(&u, &v);
             assert!(R1.equals(R2) == 0xFFFFFFFF);
+        }
+    }
+
+    #[test]
+    fn verify_helper() {
+        let mut sh = Sha256::new();
+        for i in 0..20 {
+            // Build pseudorandom Q, s and k.
+            // Compute R = s*G - k*Q
+            sh.update(((3 * i + 0) as u64).to_le_bytes());
+            let v1 = sh.finalize_reset();
+            sh.update(((3 * i + 1) as u64).to_le_bytes());
+            let v2 = sh.finalize_reset();
+            sh.update(((3 * i + 2) as u64).to_le_bytes());
+            let v3 = sh.finalize_reset();
+            let Q = Point::mulgen(&Scalar::decode_reduce(&v1));
+            let s = Scalar::decode_reduce(&v2);
+            let k = Scalar::decode_reduce(&v3);
+            let R = Point::mulgen(&s) - k * Q;
+
+            // verify_helper_vartime() must return true, but this
+            // must change to false if we change a scalar or a point.
+            assert!(Q.verify_helper_vartime(&R, &s, &k));
+            assert!(!Q.verify_helper_vartime(&R, &(s + Scalar::ONE), &k));
+            assert!(!Q.verify_helper_vartime(&R, &s, &(k + Scalar::ONE)));
+            assert!(!Q.verify_helper_vartime(&(R + Point::BASE), &s, &k));
+            assert!(!(Q + Point::BASE).verify_helper_vartime(&R, &s, &k));
         }
     }
 

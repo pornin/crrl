@@ -1365,6 +1365,25 @@ impl Point {
         R.set_mul_add_mulgen_vartime(u, v);
         R
     }
+
+    /// Check whether `s*G = R + k*Q`, for the provided scalars `s`
+    /// and `k`, provided points `Q` (`self`) and `R`, and conventional
+    /// generator `G`.
+    ///
+    /// Returned value is true on match, false otherwise. This function
+    /// is meant to support Schnorr signature verification (e.g. as defined
+    /// in FROST).
+    ///
+    /// THIS FUNCTION IS NOT CONSTANT-TIME; it shall be used only with
+    /// public data.
+    pub fn verify_helper_vartime(self,
+        R: &Point, s: &Scalar, k: &Scalar) -> bool
+    {
+        // We use mul_add_mulgen_vartime(), which leverages the fast
+        // endomorphism on the curve.
+        let T = self.mul_add_mulgen_vartime(&(-k), s);
+        T.equals(*R) != 0
+    }
 }
 
 impl Add<Point> for Point {
@@ -2629,6 +2648,33 @@ mod tests {
             let R1 = u * A + Point::mulgen(&v);
             let R2 = A.mul_add_mulgen_vartime(&u, &v);
             assert!(R1.equals(R2) == 0xFFFFFFFF);
+        }
+    }
+
+    #[test]
+    fn verify_helper() {
+        let mut sh = Sha256::new();
+        for i in 0..20 {
+            // Build pseudorandom Q, s and k.
+            // Compute R = s*G - k*Q
+            sh.update(((3 * i + 0) as u64).to_le_bytes());
+            let v1 = sh.finalize_reset();
+            sh.update(((3 * i + 1) as u64).to_le_bytes());
+            let v2 = sh.finalize_reset();
+            sh.update(((3 * i + 2) as u64).to_le_bytes());
+            let v3 = sh.finalize_reset();
+            let Q = Point::mulgen(&Scalar::decode_reduce(&v1));
+            let s = Scalar::decode_reduce(&v2);
+            let k = Scalar::decode_reduce(&v3);
+            let R = Point::mulgen(&s) - k * Q;
+
+            // verify_helper_vartime() must return true, but this
+            // must change to false if we change a scalar or a point.
+            assert!(Q.verify_helper_vartime(&R, &s, &k));
+            assert!(!Q.verify_helper_vartime(&R, &(s + Scalar::ONE), &k));
+            assert!(!Q.verify_helper_vartime(&R, &s, &(k + Scalar::ONE)));
+            assert!(!Q.verify_helper_vartime(&(R + Point::BASE), &s, &k));
+            assert!(!(Q + Point::BASE).verify_helper_vartime(&R, &s, &k));
         }
     }
 
