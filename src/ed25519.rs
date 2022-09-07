@@ -576,6 +576,8 @@ impl Point {
     /// This function is relatively expensive (about 40% of the cost of
     /// multiplying a random point with a scalar).
     pub fn is_in_subgroup(self) -> u32 {
+        // Reference: https://eprint.iacr.org/2022/1164
+        //
         // We first suppose that this point is not one of the low-order
         // points, i.e. this point can be written as P+Q with Q being a
         // low-order point (8*Q = 0), and P being in the proper subgroup
