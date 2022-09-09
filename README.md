@@ -144,6 +144,20 @@ work with standard signature formats. See
 `ed25519::PublicKey::verify_trunc_raw()` and
 `p256::PublicKey::verify_trunc_hash()` for details.
 
+# FROST Threshold Schnorr Signatures
+
+The FROST protocol for a distributed Schnorr signature generation scheme
+has been implemented, as per the v8 draft specification:
+[draft-irtf-cfrg-frost-08](https://datatracker.ietf.org/doc/html/draft-irtf-cfrg-frost-08).
+Four ciphersuites are provided, with similar APIs, in the
+`frost::ed25519`, `frost::ristretto255`, `frost::p256` and
+`frost::secp256k1` modules. A sample code showing how to use the API is
+provided in the [frost-sample.rs](extra/frost-sample.rs) file.
+
+While FROST is inherently a distributed scheme, the implementation can
+also be used in a single signer mode by using the "group" private key
+directly.
+
 # Benchmarks
 
 `cargo bench` runs some benchmarks, but there are a few caveats:
@@ -162,10 +176,6 @@ work with standard signature formats. See
     code will simply not compile.
 
 # TODO
-
-In the future, at least the following features will be added:
-
-  - Schnorr signatures on Ristretto255, using the [FROST draft](https://datatracker.ietf.org/doc/html/draft-irtf-cfrg-frost-05).
 
 In general, about anything related to cryptography may show up here,
 if there is a use case for it.
