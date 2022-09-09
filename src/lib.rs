@@ -125,3 +125,6 @@ pub mod ristretto255;
 pub mod jq255e;
 pub mod jq255s;
 pub mod secp256k1;
+
+#[cfg(feature = "alloc")]
+pub mod frost;
