@@ -47,7 +47,7 @@ use core::ops::{Add, AddAssign, Mul, MulAssign, Neg, Sub, SubAssign};
 use core::convert::TryFrom;
 use super::field::{GF255s, ModInt256};
 use blake2::{Blake2s256, Digest};
-use rand_core::{CryptoRng, RngCore};
+use super::{CryptoRng, RngCore};
 
 /// An element in the jq255s group.
 #[derive(Clone, Copy, Debug)]
@@ -2351,7 +2351,7 @@ mod tests {
 
     static KAT_ADD: [[&str; 6]; 20] = [
         // Each group of 6 values is encodings of points:
-        // P1, P2, P1+P2, 2*P1, 2*P1+P2, 2*P1+P2
+        // P1, P2, P1+P2, 2*P1, 2*P1+P2, 2*(P1+P2)
         [
 "381c4e1998ea738fcee1d18779bebb36271ef55a5bcc3a5595717576e2ce704d",
 "db479deeb0d8e6096b33dd9dd4e18d385308cb553faa89ce8681df208860a110",

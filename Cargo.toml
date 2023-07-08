@@ -1,6 +1,6 @@
 [package]
 name = "crrl"
-version = "0.3.0"
+version = "0.4.0"
 authors = ["Thomas Pornin <thomas.pornin@nccgroup.com>"]
 edition = "2018"
 license = "MIT"
@@ -15,6 +15,7 @@ exclude = ["extra/*"]
 
 [dependencies]
 sha2 = "0.10.2"
+sha3 = "0.10.6"
 blake2 = "0.10.4"
 rand_core = "0.6"
 

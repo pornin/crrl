@@ -118,7 +118,7 @@
 use core::ops::{Add, AddAssign, Mul, MulAssign, Neg, Sub, SubAssign};
 use super::field::{GFp256, ModInt256};
 use sha2::{Sha256, Sha512, Digest};
-use rand_core::{CryptoRng, RngCore};
+use super::{CryptoRng, RngCore};
 
 #[cfg(feature = "alloc")]
 use crate::Vec;

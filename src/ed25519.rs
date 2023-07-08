@@ -103,7 +103,7 @@ use core::ops::{Add, AddAssign, Mul, MulAssign, Neg, Sub, SubAssign};
 use core::convert::TryFrom;
 use super::field::{GF25519, ModInt256};
 use sha2::{Sha512, Digest};
-use rand_core::{CryptoRng, RngCore};
+use super::{CryptoRng, RngCore};
 
 /// A point on the twisted Edwards curve edwards25519.
 #[derive(Clone, Copy, Debug)]

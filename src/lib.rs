@@ -110,6 +110,8 @@ pub(crate) use alloc::vec::Vec;
 #[cfg(feature = "std")]
 pub(crate) use std::vec::Vec;
 
+pub use rand_core::{CryptoRng, RngCore, Error as RngError};
+
 macro_rules! static_assert {
     ($condition:expr) => {
         let _ = &[()][1 - ($condition) as usize];

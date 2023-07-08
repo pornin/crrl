@@ -66,7 +66,7 @@
 /// in an appropriate module with Point and Scalar already defined.
 macro_rules! define_frost_core { () => {
 
-    use rand_core::{CryptoRng, RngCore};
+    use crate::{CryptoRng, RngCore};
     use core::convert::TryFrom;
     use crate::Vec;
 
@@ -1195,7 +1195,7 @@ macro_rules! define_frost_tests { () => {
     use super::{SignerPrivateKeyShare, SignerPublicKey};
     use super::{Nonce, Commitment, SignatureShare, Signature, Coordinator};
     use super::{Point, compute_binding_factors, point_decode, scalar_decode};
-    use rand_core::{CryptoRng, RngCore};
+    use crate::{CryptoRng, RngCore, RngError};
     use sha2::{Sha512, Digest};
     use crate::Vec;
 
@@ -1255,7 +1255,7 @@ macro_rules! define_frost_tests { () => {
         }
 
         fn try_fill_bytes(&mut self, dest: &mut [u8])
-            -> Result<(), rand_core::Error>
+            -> Result<(), RngError>
         {
             self.fill_bytes(dest);
             Ok(())

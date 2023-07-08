@@ -84,7 +84,7 @@
 use core::ops::{Add, AddAssign, Mul, MulAssign, Neg, Sub, SubAssign};
 use super::field::{GFsecp256k1, ModInt256};
 use sha2::{Sha512, Digest};
-use rand_core::{CryptoRng, RngCore};
+use super::{CryptoRng, RngCore};
 use core::convert::TryFrom;
 
 /// A point on the short Weierstraß curve secp256k1.
