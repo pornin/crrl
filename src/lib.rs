@@ -130,3 +130,5 @@ pub mod secp256k1;
 
 #[cfg(feature = "alloc")]
 pub mod frost;
+
+pub mod lms;
