@@ -98,6 +98,17 @@
 //!    `sqrt(self) -> (Self, u32)`. Note that field implementations may
 //!    not provide square root computations for all supported moduli.
 //!
+//!  - The `set_sqrt_ext(&mut self) -> u32` is similar to `set_sqrt()`,
+//!    except that it set the element to a predictable value on failure;
+//!    that value depends on the field and on the input value. For integers
+//!    modulo a prime q = 3 mod 4, if the input value is x, and x is not
+//!    a square, then the element is set to a square root of -x. For integers
+//!    modulo a prime q = 5 mod 8, if the input value is x, and x is not
+//!    a square, then the element is set to a square root of either 2*x or
+//!    -2*x. A non-in-place variant is provided as
+//!    `sqrt_ext(self) -> (Self, u32)`. Note that field implementations may
+//!    not provide square root computations for all supported moduli.
+//!
 //!  - Function `split_vartime(self) -> (i128, i128)` returns two signed
 //!    integers c0 and c1 such that `self` is equal to c0/c1. Note that
 //!    if the field modulus is greater than about 1.73\*2^253, then
@@ -120,34 +131,39 @@
 //!    function is not constant-time; it MUST NOT be applied on secret
 //!    data.
 //!
-//!  - Function `encode32(self) -> [u8; 32]` encodes an element as
-//!    exactly 32 bytes. Unsigned little-endian convention is used.
-//!    Encoding is always canonical (i.e. the encoding always uses
-//!    the integer which is lower than the field modulus).
+//!    This function is defined only for fields wioth a modulus less than
+//!    2^256. It is not defined for larger fields.
 //!
-//!  - Function `decode32(buf: &[u8]) -> (Self, u32)` decodes some bytes
-//!    with little-endian convention. If the source slice does not have
-//!    length exactly 32 bytes, then the decoding fails. If the source
-//!    slice has length 32 bytes, but the byte contents yield a
-//!    non-canonical value, then decoding fails. On success, the decoded
-//!    value and 0xFFFFFFFF are returned; on failure, zero and 0x00000000
-//!    are returned. If the source slice has length 32 bytes, then not
-//!    only the decoded value, but also the operation outcome (success or
-//!    failure), are shielded from side-channel leaks.
+//!  - Function `encode(self) -> [u8; Self::ENC_LEN]` encodes an element as
+//!    bytes. Unsigned little-endian convention is used. The encoding length
+//!    (`ENC_LEN`) is the length of the modulus, in bytes. Encoding is
+//!    always canonical (i.e. the encoding always uses the integer which is
+//!    lower than the field modulus).
 //!
-//!  - Function `decode_reduce(buf: &[u8]) -> Self` decodes some bytes
-//!    with unsigned little-endian convention. The obtained integer is
+//!  - Function `set_decode_ct(&mut self, buf: &[u8]) -> u32` decodes some
+//!    bytes with the unsigned little-endian convention. If the source slice
+//!    does not have the length of the modulus, then the decoding fails. If
+//!    the source slice has the proper length, but the byte contents yield a
+//!    non-canonical value, then decoding fails. On success, the element
+//!    is set to the decoded value, and 0xFFFFFFFF is returned; on failure,
+//!    the element is set to zero, and 0x00000000 is returned. If the source
+//!    has the proper length, then not only the decoded value, but also the
+//!    operation outcome (success or failure), are shielded from side-channel
+//!    attacks. A non-in-place variant of this function is provided as
+//!    `decode_ct(buf: &[u8]) -> (Self, u32)`.
+//!
+//!  - Function `set_decode_reduce(buf: &[u8])` decodes some bytes
+//!    with the unsigned little-endian convention. The obtained integer is
 //!    reduced modulo the field order, so the process never fails.
 //!    It is fully constant-time (only the length of the source slice
-//!    may leak through timing-based side channels).
+//!    may leak through timing-based side channels). A non-in-place
+//!    variant is provided as `decode_reduce(buf: &[u8]) -> Self`.
 //!
 //!  - Function `decode(buf: &[u8]) -> Option<Self>` decodes some bytes
-//!    with unsigned little-endian convention. This function returns
-//!    `None` if the source does not have exactly the minimal length
-//!    that would be needed to encode the field modulus, or if the
-//!    value is not in the proper range (i.e. lower than the modulus).
-//!    Side-channels may leak whether decoding succeeded or failed, but
-//!    not what value was obtained on success.
+//!    with the unsigned little-endian convention. This is a wrapper
+//!    around `decode_ct()`, except that it returns `None` on decoding
+//!    failure. Due to the use of the option type, side-channel analysis
+//!    may reveal to outsiders whether the decoding succeeded or not.
 
 #[cfg(not(any(
     feature = "w32_backend",
@@ -194,6 +210,10 @@ pub type GF255<const MQ: u64> = w32::gf255::GF255<MQ>;
 ///
 /// This type implements `set_mul3()` and `mul3()`.
 ///
+/// This type does NOT implement the `encode()` function; it provides
+/// an `encode32()` function that returns an encoding over 32 bytes;
+/// the proper `ENC_LEN` constant is still defined.
+///
 /// The internal implementation strategy uses Montgomery multiplication.
 /// Some moduli yield better performance, especially moduli that contain
 /// limbs of value 0, and moduli such that `M0` is 0xFFFFFFFFFFFFFFFF.
@@ -211,22 +231,27 @@ pub type ModInt256<const M0: u64, const M1: u64, const M2: u64, const M3: u64> =
     feature = "w32_backend",
     all(not(feature = "w64_backend"), target_pointer_width = "32"),
 ))]
-pub type GFsecp256k1 = w32::modint::ModInt256<
-    0xFFFFFFFEFFFFFC2F, 0xFFFFFFFFFFFFFFFF,
-    0xFFFFFFFFFFFFFFFF, 0xFFFFFFFFFFFFFFFF>;
+pub type GFsecp256k1 = w32::gfsecp256k1::GFsecp256k1;
 
 #[cfg(any(
     feature = "w32_backend",
     all(not(feature = "w64_backend"), target_pointer_width = "32"),
 ))]
-impl GFsecp256k1 {
-    pub fn set_mul21(&mut self) {
-        *self *= Self::w64be(0, 0, 0, 21);
-    }
-    pub fn mul21(self) -> Self {
-        self * Self::w64be(0, 0, 0, 21)
-    }
-}
+pub type GF448 = w32::gf448::GF448;
+
+/// Finite field generic implementation: support macro.
+#[cfg(any(
+    feature = "w32_backend",
+    all(not(feature = "w64_backend"), target_pointer_width = "32"),
+))]
+pub use w32::gfgen::define_gfgen;
+
+/// Finite field generic implementation: support macro (tests).
+#[cfg(any(
+    feature = "w32_backend",
+    all(not(feature = "w64_backend"), target_pointer_width = "32"),
+))]
+pub use w32::gfgen::define_gfgen_tests;
 
 #[cfg(any(
     feature = "w64_backend",
@@ -283,3 +308,26 @@ pub type ModInt256<const M0: u64, const M1: u64, const M2: u64, const M3: u64> =
     all(not(feature = "w32_backend"), target_pointer_width = "64"),
 ))]
 pub type GFsecp256k1 = w64::gfsecp256k1::GFsecp256k1;
+
+/// Finite field: integers modulo 2^448 - 2^224 - 1.
+///
+/// This is a dedicated type for the base field used by curve Curve448.
+#[cfg(any(
+    feature = "w64_backend",
+    all(not(feature = "w32_backend"), target_pointer_width = "64"),
+))]
+pub type GF448 = w64::gf448::GF448;
+
+/// Finite field generic implementation: support macro.
+#[cfg(any(
+    feature = "w64_backend",
+    all(not(feature = "w32_backend"), target_pointer_width = "64"),
+))]
+pub use w64::gfgen::define_gfgen;
+
+/// Finite field generic implementation: support macro (tests).
+#[cfg(any(
+    feature = "w64_backend",
+    all(not(feature = "w32_backend"), target_pointer_width = "64"),
+))]
+pub use w64::gfgen::define_gfgen_tests;

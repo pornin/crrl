@@ -30,6 +30,14 @@ are implemented:
     has a dedicated implementation, while the 32-bit version of this
     type uses `ModInt256`.
 
+  - The macro `define_gfgen` allows defining arbitrary finite fields
+    of integers modulo a prime, with a large range of modulus size.
+    It uses Montgomery representation internally.
+
+  - Type `GF448` implements the specific base field for Curve448.
+    The 64-bit backend has a dedicated implementation, while the 32-bit
+    backend uses `define_gfgen`.
+
   - Type `ed25519::Point` provides generic group operations in the
     twisted Edwards curve Curve25519. Ed25519 signatures (as per [RFC
     8032](https://datatracker.ietf.org/doc/html/rfc8032)) are
@@ -37,8 +45,18 @@ are implemented:
     integers modulo the curve subgroup order.
 
   - Type `ristretto255::Point` provides generic group operations in the
-    [Ristretto255 group](https://ristretto.group/), whose prime order is
+    [ristretto255 group](https://ristretto.group/), whose prime order is
     exactly the size of the interesting subgroup of Curve25519.
+
+  - Type `ed448::Point` provides generic group operations in the
+    Edwards curve edwards448. Ed448 signatures (as per [RFC
+    8032](https://datatracker.ietf.org/doc/html/rfc8032)) are
+    implemented. Type `ed448::Scalar` implements operations on
+    integers modulo the curve subgroup order.
+
+  - Type `decaf448::Point` provides generic group operations in the
+    [decaf448 group](https://ristretto.group/), whose prime order is
+    exactly the size of the interesting subgroup of Curve448.
 
   - Type `p256::Point` provides generic group operations in the NIST
     P-256 curve (aka "secp256r1" aka "prime256v1"). ECDSA signatures are
@@ -56,14 +74,16 @@ are implemented:
     curves](https://doubleodd.group/) jq255e and jq255s (along with the
     corresponding scalar types `jq255e::Scalar` and `jq255s::Scalar`).
     Key exchange and Schnorr signatures are implemented. These curves
-    provide a prime-order group abstraction, similar to Ristretto255,
+    provide a prime-order group abstraction, similar to ristretto255,
     but with somewhat better performance at the same security level.
     Moreover, the relevant signatures are both shorter (48 bytes instead
     of 64) and faster than the usual Ed25519 signatures.
 
   - Function `x25519::x25519()` implements the [X25519 function](https://datatracker.ietf.org/doc/html/rfc7748#section-5).
     An optimized `x25519::x2559_base()` function is provided when X25519
-    is applied to the conventional base point.
+    is applied to the conventional base point. Similarly, `x448::x448()`
+    and `x448::x448_base()` provide the same functionality for the
+    X448 function.
 
 Types `GF255` and `ModInt256` have a 32-bit and a 64-bit implementations
 each. The code is portable (it was tested on 32-bit and 64-bit x86, and

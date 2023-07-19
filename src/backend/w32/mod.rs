@@ -1,6 +1,9 @@
 pub mod gf255;
 pub mod modint;
+pub mod gfsecp256k1;
+pub mod gf448;
 pub mod lagrange;
+pub mod gfgen;
 
 // Carrying addition and subtraction should use u32::carrying_add()
 // and u32::borrowing_sub(), but these functions are currently only

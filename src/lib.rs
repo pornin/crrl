@@ -13,15 +13,17 @@
 //! feature). The types may support several distinct moduli, chosen
 //! through compile-time type parameter.
 //!
-//! Curve Edwards25519 is implemented in the `ed25519` module. The
+//! Curve edwards25519 is implemented in the `ed25519` module. The
 //! specialized X25519 function is in `x25519`. The prime-order group
-//! Ristretto255 (internally based on Edwards25519) is defined in the
+//! ristretto255 (internally based on edwards25519) is defined in the
 //! `ristretto255` module. NIST curve P-256 (aka "secp256r1" and
 //! "prime256v1") is implemented in the `p256` module (with the ECDSA
 //! signature algorithm). Double-odd curves jq255e and jq255s are
 //! implemented by `jq255e` and `jq255s`, respectively (including
-//! signature and key exchange schemes). Other curves will be implemented
-//! in the future (e.g. secp256k1).
+//! signature and key exchange schemes). Secp256k1 is implemented in
+//! `secp256k1`. Edwards448 is in `ed448`, while the specialized X448
+//! function is in `x448`. The prime-order decaf448 group is implemented
+//! in `decaf448`.
 //!
 //! # Usage
 //!
@@ -56,7 +58,7 @@
 //!
 //! Apart from standard support for curve operations and signature
 //! algorithms, _truncated signatures_ are implemented for both Ed25519
-//! (Schnorr signatures over Edwards25519) and ECDSA (over P-256). A
+//! (Schnorr signatures over edwards25519) and ECDSA (over P-256). A
 //! truncated signature is a shrunk version, by up to 32 bits, of a
 //! normal signature; the verification process is then more expensive,
 //! though not necessarily intolerably expensive, depending on usage
@@ -73,7 +75,7 @@
 //! # Performance
 //!
 //! On an Intel i5-8259U CPU (Coffee Lake core), Ed25519 signatures have
-//! been benchmarked at about 51600 cycles for signing, 114000 cycles for
+//! been benchmarked at about 51600 cycles for signing, 111000 cycles for
 //! verification; these are not bad values, and are competitive or at
 //! least within 30% of performance obtained from assembly-optimized
 //! implementations on the same hardware. For P-256, signing time is
@@ -92,7 +94,7 @@
 //! No inline assembly is used. On x86-64 architectures, the
 //! `_addcarry_u64()` and `_subborrow_u64()` intrinsics are used
 //! (from `core::arch::x86_64`); however, plain implementations with
-//! no intrinsics are available (and used on aarch64).
+//! no intrinsics are available (and used on, for instance, aarch64).
 
 #![no_std]
 
@@ -110,6 +112,8 @@ pub(crate) use alloc::vec::Vec;
 #[cfg(feature = "std")]
 pub(crate) use std::vec::Vec;
 
+/// The `rand_core` types are re-exported so that users of crrl do not
+/// have to worry about using the exact correct version of `rand_core`.
 pub use rand_core::{CryptoRng, RngCore, Error as RngError};
 
 macro_rules! static_assert {
@@ -122,11 +126,14 @@ pub mod backend;
 pub mod field;
 pub mod ed25519;
 pub mod x25519;
-pub mod p256;
 pub mod ristretto255;
 pub mod jq255e;
 pub mod jq255s;
+pub mod p256;
 pub mod secp256k1;
+pub mod ed448;
+pub mod x448;
+pub mod decaf448;
 
 #[cfg(feature = "alloc")]
 pub mod frost;

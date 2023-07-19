@@ -30,6 +30,21 @@ impl<const M0: u64, const M1: u64, const M2: u64, const M3: u64> ModInt256<M0, M
         M3 as u32, (M3 >> 32) as u32,
     ];
 
+    // Actual encoding length (modulus size, in bytes).
+    pub const ENC_LEN: usize = 24 + (if M3 < 0x100000000 {
+        if M3 < 0x10000 {
+            if M3 < 0x100 { 1 } else { 2 }
+        } else {
+            if M3 < 0x1000000 { 3 } else { 4 }
+        }
+    } else {
+        if M3 < 0x1000000000000 {
+            if M3 < 0x10000000000 { 5 } else { 6 }
+        } else {
+            if M3 < 0x100000000000000 { 7 } else { 8 }
+        }
+    });
+
     // floor(q / 4) + 1 (equal to (q+1)/4 if q = 3 mod 8).
     const QP1D4: [u32; 8] = Self::make_qp1d4();
 
@@ -1265,6 +1280,45 @@ impl<const M0: u64, const M1: u64, const M2: u64, const M3: u64> ModInt256<M0, M
     // Decode a value from exactly 32 bytes. The value is interpreted in
     // little-endian convention. If the provided slice does not have length
     // exactly 32 bytes, or if the value is not strictly lower than the
+    // modulus, then the decoding fails. On failure, this element is set
+    // to zero, and 0 is returned; otherwise, this element is set to the
+    // decoded value, and 0xFFFFFFFF is returned.
+    #[inline]
+    pub fn set_decode32(&mut self, buf: &[u8]) -> u32 {
+        *self = Self::ZERO;
+
+        // If the source slice length is not correct then we cannot hide
+        // it from timning-based attackers, so we may as well return right
+        // away.
+        if buf.len() != 32 {
+            return 0;
+        }
+
+        for i in 0..8 {
+            self.0[i] = u32::from_le_bytes(*<&[u8; 4]>::try_from(
+                &buf[(i * 4)..(i * 4 + 4)]).unwrap());
+        }
+
+        // Clear the value if not canonical.
+        let (_, mut cc) = subborrow_u32(self.0[0], Self::MODULUS[0], 0);
+        for i in 1..8 {
+            let (_, ee) = subborrow_u32(self.0[i], Self::MODULUS[i], cc);
+            cc = ee;
+        }
+        let w = (cc as u32).wrapping_neg();
+        for i in 0..8 {
+            self.0[i] &= w;
+        }
+
+        // Convert to Montgomery representation.
+        self.set_mul(&Self::R2);
+
+        w
+    }
+
+    // Decode a value from exactly 32 bytes. The value is interpreted in
+    // little-endian convention. If the provided slice does not have length
+    // exactly 32 bytes, or if the value is not strictly lower than the
     // modulus, then the decoding fails.
     //
     // Returned value are (r, cc). On success, r is the decoded value, and
@@ -1273,55 +1327,51 @@ impl<const M0: u64, const M1: u64, const M2: u64, const M3: u64> ModInt256<M0, M
     // or not is a constant-time information.
     #[inline]
     pub fn decode32(buf: &[u8]) -> (Self, u32) {
-        // If the source slice length is not correct then we cannot hide
-        // it from timning-based attackers, so we may as well return right
-        // away.
-        if buf.len() != 32 {
-            return (Self::ZERO, 0);
-        }
-
         let mut r = Self::ZERO;
-        for i in 0..8 {
-            r.0[i] = u32::from_le_bytes(*<&[u8; 4]>::try_from(
-                &buf[(i * 4)..(i * 4 + 4)]).unwrap());
-        }
-
-        // Clear the value if not canonical.
-        let (_, mut cc) = subborrow_u32(r.0[0], Self::MODULUS[0], 0);
-        for i in 1..8 {
-            let (_, ee) = subborrow_u32(r.0[i], Self::MODULUS[i], cc);
-            cc = ee;
-        }
-        let w = (cc as u32).wrapping_neg();
-        for i in 0..8 {
-            r.0[i] &= w;
-        }
-
-        // Convert to Montgomery representation.
-        r.set_mul(&Self::R2);
-        (r, w)
+        let cc = r.set_decode32(buf);
+        (r, cc)
     }
 
-    pub fn decode(buf: &[u8]) -> Option<Self> {
-        let n = 24 + (if M3 < 0x100000000 {
-            if M3 < 0x10000 {
-                if M3 < 0x100 { 1 } else { 2 }
-            } else {
-                if M3 < 0x1000000 { 3 } else { 4 }
-            }
-        } else {
-            if M3 < 0x1000000000000 {
-                if M3 < 0x10000000000 { 5 } else { 6 }
-            } else {
-                if M3 < 0x100000000000000 { 7 } else { 8 }
-            }
-        });
+    // Decode a field element from the provided bytes. This function
+    // behaves similarly to set_decode32(), except that the actual encoding
+    // length is expected. The encoding length is equal to the length, in
+    // bytes, of the modulus; it is lower than 32 if the modulus is less
+    // than 2^248. Note that the encoding length is fixed for a given
+    // modulus; it does not depend on the element value itself.
+    #[inline]
+    pub fn set_decode_ct(&mut self, buf: &[u8]) -> u32 {
+        let n = Self::ENC_LEN;
         if n != buf.len() {
-            return None;
+            *self = Self::ZERO;
+            return 0;
         }
         let mut bb = [0u8; 32];
         bb[0..n].copy_from_slice(buf);
-        let (r, cc) = Self::decode32(&bb);
+        self.set_decode32(&bb)
+    }
+
+    // Decode a field element from the provided bytes. This function
+    // behaves similarly to decode32(), except that the actual encoding
+    // length is expected. The encoding length is equal to the length, in
+    // bytes, of the modulus; it is lower than 32 if the modulus is less
+    // than 2^248. Note that the encoding length is fixed for a given
+    // modulus; it does not depend on the element value itself.
+    #[inline]
+    pub fn decode_ct(buf: &[u8]) -> (Self, u32) {
+        let mut r = Self::ZERO;
+        let cc = r.set_decode_ct(buf);
+        (r, cc)
+    }
+
+    // Decode a field element from the provided bytes. If the source slice
+    // has the proper encoding length (i.e. is equal to the length, in
+    // bytes, of the modulus) and the value is canonical (i.e. less than
+    // the modulus, as an integer), then the element is returned. Otherwise,
+    // `None` is returned. Side-channel analysis may reveal to outsiders
+    // whether the decoding succeeded.
+    #[inline]
+    pub fn decode(buf: &[u8]) -> Option<Self> {
+        let (r, cc) = Self::decode_ct(buf);
         if cc != 0 {
             Some(r)
         } else {
@@ -1332,30 +1382,38 @@ impl<const M0: u64, const M1: u64, const M2: u64, const M3: u64> ModInt256<M0, M
     // Decode an element from some bytes. The bytes are interpreted in
     // unsigned little-endian convention, and the resulting integer is
     // reduced modulo m. This process never fails.
-    pub fn decode_reduce(buf: &[u8]) -> Self {
-        let mut r = Self::ZERO;
+    pub fn set_decode_reduce(&mut self, buf: &[u8]) {
+        *self = Self::ZERO;
         let mut n = buf.len();
         if n == 0 {
-            return r;
+            return;
         }
         if (n & 31) != 0 {
             let k = n & !(31 as usize);
             let mut tmp = [0u8; 32];
             tmp[..(n - k)].copy_from_slice(&buf[k..]);
             n = k;
-            r.set_decode32_reduce(&tmp);
+            self.set_decode32_reduce(&tmp);
         } else {
             n -= 32;
-            r.set_decode32_reduce(&buf[n..]);
+            self.set_decode32_reduce(&buf[n..]);
         }
 
         while n > 0 {
             n -= 32;
             let d = Self::decode32_reduce(&buf[n..n + 32]);
-            r.set_mul(&Self::R2);
-            r.set_add(&d);
+            self.set_mul(&Self::R2);
+            self.set_add(&d);
         }
+    }
 
+    // Decode an element from some bytes. The bytes are interpreted in
+    // unsigned little-endian convention, and the resulting integer is
+    // reduced modulo m. This process never fails.
+    #[inline(always)]
+    pub fn decode_reduce(buf: &[u8]) -> Self {
+        let mut r = Self::ZERO;
+        r.set_decode_reduce(buf);
         r
     }
 

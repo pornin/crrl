@@ -136,9 +136,6 @@ pub type Scalar = ModInt256<0xF3B9CAC2FC632551, 0xBCE6FAADA7179E84,
                             0xFFFFFFFFFFFFFFFF, 0xFFFFFFFF00000000>;
 
 impl Scalar {
-    /// Scalar encoding length (in bytes).
-    pub const ENC_LEN: usize = 32;
-
     /// Encodes a scalar element into bytes (little-endian).
     pub fn encode(self) -> [u8; 32] {
         self.encode32()

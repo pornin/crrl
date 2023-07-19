@@ -1,13 +1,13 @@
 //! Ristreto255 implementation.
 //!
-//! The Ristretto255 group is a prime order group currently specified in
-//! [draft-irtf-cfrg-ristretto255-decaf448-03]. It is internally defined
+//! The ristretto255 group is a prime order group currently specified in
+//! [draft-irtf-cfrg-ristretto255-decaf448-07]. It is internally defined
 //! over the curve Edwards25519, which is a twisted Edwards curve. Users
-//! of Ristretto255 should not, in general, think about the underlying
+//! of ristretto255 should not, in general, think about the underlying
 //! curve points; the group has prime order and that is the abstraction
 //! that is convenient for building cryptographic protocols.
 //!
-//! The `Point` structure represents a Ristretto255 point. Such points
+//! The `Point` structure represents a ristretto255 point. Such points
 //! can be encoded into 32 bytes, and decoded back; encoding is always
 //! canonical, and this is enforced upon decoding. This implementation
 //! strictly follows the draft; in particular, when decoding a point from
@@ -16,11 +16,11 @@
 //! the code does not ignore it when decoding).
 //!
 //! The `Scalar` type is an alias for the `ed25519::Scalar` type, which
-//! represents integers modulo the Ristretto255 order `L` (in the twisted
+//! represents integers modulo the ristretto255 order `L` (in the twisted
 //! Edwards curve, this is the order of a specific subgroup of the
 //! curve).
 //!
-//! [draft-irtf-cfrg-ristretto255-decaf448-03]: https://datatracker.ietf.org/doc/html/draft-irtf-cfrg-ristretto255-decaf448
+//! [draft-irtf-cfrg-ristretto255-decaf448-07]: https://datatracker.ietf.org/doc/html/draft-irtf-cfrg-ristretto255-decaf448
 
 // Projective/fractional coordinates traditionally use uppercase letters,
 // using lowercase only for affine coordinates.
@@ -30,11 +30,11 @@ use core::ops::{Add, AddAssign, Mul, MulAssign, Neg, Sub, SubAssign};
 use super::field::GF25519;
 use super::ed25519::{Point as Ed25519Point, Scalar as Ed25519Scalar};
 
-/// A Ristretto255 point.
+/// A ristretto255 point.
 #[derive(Clone, Copy, Debug)]
 pub struct Point(Ed25519Point);
 
-/// A Ristretto255 scalar (integer modulo the group prime order `L`).
+/// A ristretto255 scalar (integer modulo the group prime order `L`).
 pub type Scalar = Ed25519Scalar;
 
 impl Point {
@@ -148,7 +148,7 @@ impl Point {
     ///
     /// If the input does not have length exactly 32 bytes, or if the
     /// input has length 32 bytes but is not the valid, canonical encoding
-    /// of a Ristretto255 point, then this function sets `self` to the
+    /// of a ristretto255 point, then this function sets `self` to the
     /// neutral element and returns 0x00000000; otherwise, it sets `self`
     /// to the decoded element and returns 0xFFFFFFFF.
     pub fn set_decode(&mut self, buf: &[u8]) -> u32 {
@@ -187,7 +187,7 @@ impl Point {
     ///
     /// If the input does not have length exactly 32 bytes, or if the
     /// input has length 32 bytes but is not the valid, canonical encoding
-    /// of a Ristretto255 point, then this function returns `None`.
+    /// of a ristretto255 point, then this function returns `None`.
     /// Otherwise, it returns the decoded element.
     ///
     /// Since this function uses an option type, outsiders may detect
@@ -255,8 +255,8 @@ impl Point {
     /// all other elements.
     #[inline(always)]
     pub fn isneutral(self) -> u32 {
-        // We use the equals() formula against the Ed25519 neutral (0,1)
-        // (which is a valid representation of the Ristretto255 neutral).
+        // We use the equals() formula against the edwards25519 neutral (0,1)
+        // (which is a valid representation of the ristretto255 neutral).
         let (x1, y1) = (&self.0.X, &self.0.Y);
         x1.iszero() | y1.iszero()
     }
@@ -328,13 +328,13 @@ impl Point {
         Self(Ed25519Point { X: w0 * w3, Y: w2 * w1, Z: w1 * w3, T: w0 * w2 })
     }
 
-    /// The one-way map of bytes to Ristretto255 elements.
+    /// The one-way map of bytes to ristretto255 elements.
     ///
     /// This is the map described in the draft, section 4.3.4. The input
     /// MUST have length exactly 64 bytes (a panic is triggered otherwise).
     /// If the input is itself a 64-byte output of a secure hash function
     /// (e.g. SHA-512) then this constitutes a hash function with output
-    /// in Ristretto255 (output is then indistinguishable from random
+    /// in ristretto255 (output is then indistinguishable from random
     /// uniform selection).
     pub fn one_way_map(buf: &[u8]) -> Self {
         assert!(buf.len() == 64);
@@ -365,7 +365,7 @@ impl Point {
 
     /// Multiplies this element by the provided integer.
     ///
-    /// The function is constant-time with regard to the Ristretto255
+    /// The function is constant-time with regard to the ristretto255
     /// element, but NOT to the multiplier `n`, which is assumed to be
     /// public.
     #[inline(always)]
@@ -767,7 +767,7 @@ mod tests {
     }
     */
 
-    // Test vectors from draft-irtf-cfrg-ristretto255-decaf448-03,
+    // Test vectors from draft-irtf-cfrg-ristretto255-decaf448-07,
     // section A.1.
     const VEC_MULGEN: [&str; 16] = [
         "0000000000000000000000000000000000000000000000000000000000000000",
@@ -806,7 +806,7 @@ mod tests {
         }
     }
 
-    // Test vectors from draft-irtf-cfrg-ristretto255-decaf448-03,
+    // Test vectors from draft-irtf-cfrg-ristretto255-decaf448-07,
     // section A.2.
     const VEC_INVALID: [&str; 29] = [
         // Non-canonical field encodings.
@@ -857,7 +857,7 @@ mod tests {
         }
     }
 
-    // Test vectors from draft-irtf-cfrg-ristretto255-decaf448-03,
+    // Test vectors from draft-irtf-cfrg-ristretto255-decaf448-07,
     // section A.3.
     struct Ristretto255MapTestVector<'a> {
         I: &'a str,

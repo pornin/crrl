@@ -30,6 +30,9 @@ impl<const MQ: u64> GF255<MQ> {
         static_assert!(MQ <= 32767);
     }
 
+    // Element encoding length (in bytes); always 32 bytes.
+    pub const ENC_LEN: usize = 32;
+
     // Modulus is q = 2^255 - T255_MINUS_Q.
     // (this is the type parameter MQ, as a 32-bit integer)
     pub const T255_MINUS_Q: u32 = MQ as u32;
@@ -1415,15 +1418,7 @@ impl<const MQ: u64> GF255<MQ> {
         (r >> 31).wrapping_sub(1)
     }
 
-    pub fn decode(buf: &[u8]) -> Option<Self> {
-        let (r, cc) = Self::decode32(buf);
-        if cc != 0 {
-            Some(r)
-        } else {
-            None
-        }
-    }
-
+    /* unused
     #[inline(always)]
     fn decode32_reduce(buf: &[u8]) -> Self {
         let mut r = Self::ZERO;
@@ -1432,6 +1427,7 @@ impl<const MQ: u64> GF255<MQ> {
         }
         r
     }
+    */
 
     #[inline(always)]
     fn set_decode32_reduce(&mut self, buf: &[u8]) {
@@ -1456,55 +1452,103 @@ impl<const MQ: u64> GF255<MQ> {
         d
     }
 
+    // Encode this value over exactly 32 bytes. Encoding is always canonical
+    // (little-endian encoding of the value in the 0..q-1 range, top bit
+    // of the last byte is always 0).
+    #[inline(always)]
+    pub fn encode(self) -> [u8; 32] {
+        self.encode32()
+    }
+
+    // Decode the field element from the provided bytes. If the source
+    // slice does not have length exactly 32 bytes, or if the encoding
+    // is non-canonical (i.e. does not represent an integer in the 0
+    // to q-1 range), then this element is set to zero, and 0 is returned.
+    // Otherwise, this element is set to the decoded value, and 0xFFFFFFFF
+    // is returned.
+    #[inline]
+    pub fn set_decode_ct(&mut self, buf: &[u8]) -> u32 {
+        if buf.len() != 32 {
+            *self = Self::ZERO;
+            return 0;
+        }
+
+        self.set_decode32_reduce(buf);
+
+        // Try to subtract q from the value; if that does not yield a
+        // borrow, then the encoding was not canonical.
+        let (_, mut cc) = subborrow_u32(
+            self.0[0], (MQ as u32).wrapping_neg(), 0);
+        for i in 1..7 {
+            let (_, ee) = subborrow_u32(self.0[i], 0xFFFFFFFF, cc);
+            cc = ee;
+        }
+        let (_, cc) = subborrow_u32(self.0[7], 0x7FFFFFFF, cc);
+
+        // Clear the value if not canonical.
+        let w = (cc as u32).wrapping_neg();
+        for i in 0..8 {
+            self.0[i] &= w;
+        }
+
+        w
+    }
+
     // Decode a field element from 32 bytes. On success, this returns
     // (r, cc), where cc has value 0xFFFFFFFF. If the source encoding is not
     // canonical (i.e. the unsigned little-endian interpretation of the
     // 32 bytes yields an integer with is not lower than q), then this
     // returns (0, 0).
-    #[inline]
+    #[inline(always)]
+    pub fn decode_ct(buf: &[u8]) -> (Self, u32) {
+        let mut r = Self::ZERO;
+        let cc = r.set_decode_ct(buf);
+        (r, cc)
+    }
+
+    // Decode a field element from 32 bytes. On success, this returns
+    // (r, cc), where cc has value 0xFFFFFFFF. If the source encoding is not
+    // canonical (i.e. the unsigned little-endian interpretation of the
+    // 32 bytes yields an integer with is not lower than q), then this
+    // returns (0, 0).
+    #[inline(always)]
     pub fn decode32(buf: &[u8]) -> (Self, u32) {
-        if buf.len() != 32 {
-            return (Self::ZERO, 0);
+        Self::decode_ct(buf)
+    }
+
+    // Decode a field element from 32 bytes. If the source slice has length
+    // exactly 32 bytes and contains a valid canonical encoding of a field
+    // element, then that element is returned. Otherwise, `None` is
+    // returned. Side-channel analysis may reveal to outsiders whether the
+    // decoding succeeded.
+    #[inline(always)]
+    pub fn decode(buf: &[u8]) -> Option<Self> {
+        let (r, cc) = Self::decode_ct(buf);
+        if cc != 0 {
+            Some(r)
+        } else {
+            None
         }
-
-        let mut r = Self::decode32_reduce(buf);
-
-        // Try to subtract q from the value; if that does not yield a
-        // borrow, then the encoding was not canonical.
-        let (_, mut cc) = subborrow_u32(r.0[0], (MQ as u32).wrapping_neg(), 0);
-        for i in 1..7 {
-            let (_, ee) = subborrow_u32(r.0[i], 0xFFFFFFFF, cc);
-            cc = ee;
-        }
-        let (_, cc) = subborrow_u32(r.0[7], 0x7FFFFFFF, cc);
-
-        // Clear the value if not canonical.
-        let w = (cc as u32).wrapping_neg();
-        for i in 0..8 {
-            r.0[i] &= w;
-        }
-
-        (r, w)
     }
 
     // Decode a field element from some bytes. The bytes are interpreted
     // in unsigned little-endian convention, and the resulting integer
     // is reduced modulo q. This process never fails.
-    pub fn decode_reduce(buf: &[u8]) -> Self {
-        let mut r = Self::ZERO;
+    pub fn set_decode_reduce(&mut self, buf: &[u8]) {
+        *self = Self::ZERO;
         let mut n = buf.len();
         if n == 0 {
-            return r;
+            return;
         }
         if (n & 31) != 0 {
             let k = n & !(31 as usize);
             let mut tmp = [0u8; 32];
             tmp[..(n - k)].copy_from_slice(&buf[k..]);
             n = k;
-            r.set_decode32_reduce(&tmp);
+            self.set_decode32_reduce(&tmp);
         } else {
             n -= 32;
-            r.set_decode32_reduce(&buf[n..]);
+            self.set_decode32_reduce(&buf[n..]);
         }
 
         while n > 0 {
@@ -1513,13 +1557,13 @@ impl<const MQ: u64> GF255<MQ> {
             let k = n - 32;
             let bw = u32::from_le_bytes(*<&[u8; 4]>::try_from(
                     &buf[k..(k + 4)]).unwrap());
-            let (lo, mut cc) = umull_add(r.0[0], 2 * (MQ as u32), bw);
-            r.0[0] = lo;
+            let (lo, mut cc) = umull_add(self.0[0], 2 * (MQ as u32), bw);
+            self.0[0] = lo;
             for i in 1..8 {
                 let bw = u32::from_le_bytes(*<&[u8; 4]>::try_from(
                     &buf[(k + 4 * i)..(k + 4 * i + 4)]).unwrap());
-                let (lo, hi) = umull_add2(r.0[i], 2 * (MQ as u32), bw, cc);
-                r.0[i] = lo;
+                let (lo, hi) = umull_add2(self.0[i], 2 * (MQ as u32), bw, cc);
+                self.0[i] = lo;
                 cc = hi;
             }
 
@@ -1529,20 +1573,28 @@ impl<const MQ: u64> GF255<MQ> {
             //   = 2*MQ
             // We can do the folding with an extra bit from the value,
             // because (2 * cc + 1) * MQ <= (4*MQ + 1)*MQ < 2^32.
-            let h = ((cc << 1) | r.0[7] >> 31) * (MQ as u32);
-            let (d, mut cc) = addcarry_u32(r.0[0], h, 0);
-            r.0[0] = d;
+            let h = ((cc << 1) | self.0[7] >> 31) * (MQ as u32);
+            let (d, mut cc) = addcarry_u32(self.0[0], h, 0);
+            self.0[0] = d;
             for i in 1..7 {
-                let (d, ee) = addcarry_u32(r.0[i], 0, cc);
-                r.0[i] = d;
+                let (d, ee) = addcarry_u32(self.0[i], 0, cc);
+                self.0[i] = d;
                 cc = ee;
             }
-            let (d, _) = addcarry_u32(r.0[7] & 0x7FFFFFFF, 0, cc);
-            r.0[7] = d;
+            let (d, _) = addcarry_u32(self.0[7] & 0x7FFFFFFF, 0, cc);
+            self.0[7] = d;
 
             n = k;
         }
+    }
 
+    // Decode a field element from some bytes. The bytes are interpreted
+    // in unsigned little-endian convention, and the resulting integer
+    // is reduced modulo q. This process never fails.
+    #[inline(always)]
+    pub fn decode_reduce(buf: &[u8]) -> Self {
+        let mut r = Self::ZERO;
+        r.set_decode_reduce(buf);
         r
     }
 
@@ -1964,8 +2016,10 @@ mod tests {
         ]);
         let zp4 = &zp << 2;
 
-        let a = GF255::<MQ>::decode32_reduce(va);
-        let b = GF255::<MQ>::decode32_reduce(vb);
+        let mut a = GF255::<MQ>::ZERO;
+        a.set_decode_reduce(va);
+        let mut b = GF255::<MQ>::ZERO;
+        b.set_decode_reduce(vb);
         let za = BigInt::from_bytes_le(Sign::Plus, va);
         let zb = BigInt::from_bytes_le(Sign::Plus, vb);
 

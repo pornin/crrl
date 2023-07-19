@@ -20,6 +20,9 @@ impl GFsecp256k1 {
         0xFFFFFFFFFFFFFFFF
     ];
 
+    // Element encoding length: 32 bytes.
+    pub const ENC_LEN: usize = 32;
+
     pub const ZERO: GFsecp256k1 = GFsecp256k1([ 0, 0, 0, 0 ]);
     pub const ONE: GFsecp256k1 = GFsecp256k1([ 1, 0, 0, 0 ]);
     pub const MINUS_ONE: GFsecp256k1 = GFsecp256k1([
@@ -1303,6 +1306,7 @@ impl GFsecp256k1 {
         ((r >> 63) as u32).wrapping_sub(1)
     }
 
+    /* unused
     #[inline(always)]
     fn decode32_reduce(buf: &[u8]) -> Self {
         let mut r = Self::ZERO;
@@ -1311,6 +1315,7 @@ impl GFsecp256k1 {
         }
         r
     }
+    */
 
     #[inline(always)]
     fn set_decode32_reduce(&mut self, buf: &[u8]) {
@@ -1325,7 +1330,7 @@ impl GFsecp256k1 {
     // (little-endian encoding of the value in the 0..q-1 range, top bit
     // of the last byte is always 0).
     #[inline(always)]
-    pub fn encode32(self) -> [u8; 32] {
+    pub fn encode(self) -> [u8; 32] {
         let mut r = self;
         r.set_normalized();
         let mut d = [0u8; 32];
@@ -1336,38 +1341,76 @@ impl GFsecp256k1 {
         d
     }
 
+    // Encode this value over exactly 32 bytes. Encoding is always canonical
+    // (little-endian encoding of the value in the 0..q-1 range, top bit
+    // of the last byte is always 0).
+    #[inline(always)]
+    pub fn encode32(self) -> [u8; 32] {
+        self.encode()
+    }
+
+    // Decode the field element from the provided bytes. If the source
+    // slice does not have length exactly 32 bytes, or if the encoding
+    // is non-canonical (i.e. does not represent an integer in the 0
+    // to q-1 range), then this element is set to zero, and 0 is returned.
+    // Otherwise, this element is set to the decoded value, and 0xFFFFFFFF
+    // is returned.
+    #[inline]
+    pub fn set_decode_ct(&mut self, buf: &[u8]) -> u32 {
+        *self = Self::ZERO;
+        if buf.len() != 32 {
+            return 0;
+        }
+
+        self.set_decode32_reduce(buf);
+
+        // Try to subtract q from the value; if that does not yield a
+        // borrow, then the encoding was not canonical.
+        let (_, cc) = subborrow_u64(self.0[0], Self::MOD0, 0);
+        let (_, cc) = subborrow_u64(self.0[1], 0xFFFFFFFFFFFFFFFF, cc);
+        let (_, cc) = subborrow_u64(self.0[2], 0xFFFFFFFFFFFFFFFF, cc);
+        let (_, cc) = subborrow_u64(self.0[3], 0xFFFFFFFFFFFFFFFF, cc);
+
+        // Clear the value if not canonical.
+        let cc = (cc as u64).wrapping_neg();
+        self.0[0] &= cc;
+        self.0[1] &= cc;
+        self.0[2] &= cc;
+        self.0[3] &= cc;
+
+        cc as u32
+    }
+
     // Decode a field element from 32 bytes. On success, this returns
     // (r, cc), where cc has value 0xFFFFFFFF. If the source encoding is not
     // canonical (i.e. the unsigned little-endian interpretation of the
     // 32 bytes yields an integer with is not lower than q), then this
     // returns (0, 0).
-    #[inline]
-    pub fn decode32(buf: &[u8]) -> (Self, u32) {
-        if buf.len() != 32 {
-            return (Self::ZERO, 0);
-        }
-
-        let mut r = Self::decode32_reduce(buf);
-
-        // Try to subtract q from the value; if that does not yield a
-        // borrow, then the encoding was not canonical.
-        let (_, cc) = subborrow_u64(r.0[0], Self::MOD0, 0);
-        let (_, cc) = subborrow_u64(r.0[1], 0xFFFFFFFFFFFFFFFF, cc);
-        let (_, cc) = subborrow_u64(r.0[2], 0xFFFFFFFFFFFFFFFF, cc);
-        let (_, cc) = subborrow_u64(r.0[3], 0xFFFFFFFFFFFFFFFF, cc);
-
-        // Clear the value if not canonical.
-        let cc = (cc as u64).wrapping_neg();
-        r.0[0] &= cc;
-        r.0[1] &= cc;
-        r.0[2] &= cc;
-        r.0[3] &= cc;
-
-        (r, cc as u32)
+    #[inline(always)]
+    pub fn decode_ct(buf: &[u8]) -> (Self, u32) {
+        let mut r = Self::ZERO;
+        let cc = r.set_decode_ct(buf);
+        (r, cc)
     }
 
+    // Decode a field element from 32 bytes. On success, this returns
+    // (r, cc), where cc has value 0xFFFFFFFF. If the source encoding is not
+    // canonical (i.e. the unsigned little-endian interpretation of the
+    // 32 bytes yields an integer with is not lower than q), then this
+    // returns (0, 0).
+    #[inline(always)]
+    pub fn decode32(buf: &[u8]) -> (Self, u32) {
+        Self::decode_ct(buf)
+    }
+
+    // Decode a field element from 32 bytes. If the source slice has length
+    // exactly 32 bytes and contains a valid canonical encoding of a field
+    // element, then that element is returned. Otherwise, `None` is
+    // returned. Side-channel analysis may reveal to outsiders whether the
+    // decoding succeeded.
+    #[inline(always)]
     pub fn decode(buf: &[u8]) -> Option<Self> {
-        let (r, cc) = Self::decode32(buf);
+        let (r, cc) = Self::decode_ct(buf);
         if cc != 0 {
             Some(r)
         } else {
@@ -1378,21 +1421,21 @@ impl GFsecp256k1 {
     // Decode a field element from some bytes. The bytes are interpreted
     // in unsigned little-endian convention, and the resulting integer
     // is reduced modulo q. This process never fails.
-    pub fn decode_reduce(buf: &[u8]) -> Self {
-        let mut r = Self::ZERO;
+    pub fn set_decode_reduce(&mut self, buf: &[u8]) {
+        *self = Self::ZERO;
         let mut n = buf.len();
         if n == 0 {
-            return r;
+            return;
         }
         if (n & 31) != 0 {
             let k = n & !(31 as usize);
             let mut tmp = [0u8; 32];
             tmp[..(n - k)].copy_from_slice(&buf[k..]);
             n = k;
-            r.set_decode32_reduce(&tmp);
+            self.set_decode32_reduce(&tmp);
         } else {
             n -= 32;
-            r.set_decode32_reduce(&buf[n..]);
+            self.set_decode32_reduce(&buf[n..]);
         }
 
         while n > 0 {
@@ -1405,13 +1448,13 @@ impl GFsecp256k1 {
                 ::try_from(&buf[k + 16..k + 24]).unwrap());
             let e3 = u64::from_le_bytes(*<&[u8; 8]>
                 ::try_from(&buf[k + 24..k + 32]).unwrap());
-            let (d0, h0) = umull(r.0[0], Self::T256_MINUS_Q);
+            let (d0, h0) = umull(self.0[0], Self::T256_MINUS_Q);
             let (d0, cc) = addcarry_u64(d0, e0, 0);
-            let (d1, h1) = umull(r.0[1], Self::T256_MINUS_Q);
+            let (d1, h1) = umull(self.0[1], Self::T256_MINUS_Q);
             let (d1, cc) = addcarry_u64(d1, e1, cc);
-            let (d2, h2) = umull(r.0[2], Self::T256_MINUS_Q);
+            let (d2, h2) = umull(self.0[2], Self::T256_MINUS_Q);
             let (d2, cc) = addcarry_u64(d2, e2, cc);
-            let (d3, h3) = umull(r.0[3], Self::T256_MINUS_Q);
+            let (d3, h3) = umull(self.0[3], Self::T256_MINUS_Q);
             let (d3, cc) = addcarry_u64(d3, e3, cc);
             let (h3, _)  = addcarry_u64(h3, 0, cc);
 
@@ -1427,14 +1470,22 @@ impl GFsecp256k1 {
             let (d2, cc) = addcarry_u64(d2, 0, cc);
             let (d3, _)  = addcarry_u64(d3, 0, cc);
 
-            r.0[0] = d0;
-            r.0[1] = d1;
-            r.0[2] = d2;
-            r.0[3] = d3;
+            self.0[0] = d0;
+            self.0[1] = d1;
+            self.0[2] = d2;
+            self.0[3] = d3;
 
             n = k;
         }
+    }
 
+    // Decode a field element from some bytes. The bytes are interpreted
+    // in unsigned little-endian convention, and the resulting integer
+    // is reduced modulo q. This process never fails.
+    #[inline(always)]
+    pub fn decode_reduce(buf: &[u8]) -> Self {
+        let mut r = Self::ZERO;
+        r.set_decode_reduce(buf);
         r
     }
 }
@@ -1721,95 +1772,97 @@ mod tests {
         ]);
         let zp4 = &zp << 2;
 
-        let a = GFsecp256k1::decode32_reduce(va);
-        let b = GFsecp256k1::decode32_reduce(vb);
+        let mut a = GFsecp256k1::ZERO;
+        a.set_decode32_reduce(va);
+        let mut b = GFsecp256k1::ZERO;
+        b.set_decode32_reduce(vb);
         let za = BigInt::from_bytes_le(Sign::Plus, va);
         let zb = BigInt::from_bytes_le(Sign::Plus, vb);
 
-        let vc = a.encode32();
+        let vc = a.encode();
         let zc = BigInt::from_bytes_le(Sign::Plus, &vc);
         let zd = &za % &zp;
         assert!(zc == zd);
 
         let c = a + b;
-        let vc = c.encode32();
+        let vc = c.encode();
         let zc = BigInt::from_bytes_le(Sign::Plus, &vc);
         let zd = (&za + &zb) % &zp;
         assert!(zc == zd);
 
         let c = a - b;
-        let vc = c.encode32();
+        let vc = c.encode();
         let zc = BigInt::from_bytes_le(Sign::Plus, &vc);
         let zd = ((&zp4 + &za) - &zb) % &zp;
         assert!(zc == zd);
 
         let c = -a;
-        let vc = c.encode32();
+        let vc = c.encode();
         let zc = BigInt::from_bytes_le(Sign::Plus, &vc);
         let zd = (&zp4 - &za) % &zp;
         assert!(zc == zd);
 
         let c = a * b;
-        let vc = c.encode32();
+        let vc = c.encode();
         let zc = BigInt::from_bytes_le(Sign::Plus, &vc);
         let zd = (&za * &zb) % &zp;
         assert!(zc == zd);
 
         let c = a.half();
-        let vc = c.encode32();
+        let vc = c.encode();
         let zc = BigInt::from_bytes_le(Sign::Plus, &vc);
         let zd: BigInt = ((&zp4 + (&zc << 1)) - &za) % &zp;
         assert!(zd.sign() == Sign::NoSign);
 
         let c = a.mul2();
-        let vc = c.encode32();
+        let vc = c.encode();
         let zc = BigInt::from_bytes_le(Sign::Plus, &vc);
         let zd = (&za << 1) % &zp;
         assert!(zc == zd);
 
         let c = a.mul4();
-        let vc = c.encode32();
+        let vc = c.encode();
         let zc = BigInt::from_bytes_le(Sign::Plus, &vc);
         let zd = (&za << 2) % &zp;
         assert!(zc == zd);
 
         let c = a.mul8();
-        let vc = c.encode32();
+        let vc = c.encode();
         let zc = BigInt::from_bytes_le(Sign::Plus, &vc);
         let zd = (&za << 3) % &zp;
         assert!(zc == zd);
 
         let c = a.mul16();
-        let vc = c.encode32();
+        let vc = c.encode();
         let zc = BigInt::from_bytes_le(Sign::Plus, &vc);
         let zd = (&za << 4) % &zp;
         assert!(zc == zd);
 
         let c = a.mul32();
-        let vc = c.encode32();
+        let vc = c.encode();
         let zc = BigInt::from_bytes_le(Sign::Plus, &vc);
         let zd = (&za << 5) % &zp;
         assert!(zc == zd);
 
         let x = b.0[1] as u16;
         let c = a.mul_u16(x);
-        let vc = c.encode32();
+        let vc = c.encode();
         let zc = BigInt::from_bytes_le(Sign::Plus, &vc);
         let zd = (&za * x) % &zp;
         assert!(zc == zd);
 
         let c = a.square();
-        let vc = c.encode32();
+        let vc = c.encode();
         let zc = BigInt::from_bytes_le(Sign::Plus, &vc);
         let zd = (&za * &za) % &zp;
         assert!(zc == zd);
 
-        let (e, cc) = GFsecp256k1::decode32(va);
+        let (e, cc) = GFsecp256k1::decode_ct(va);
         if cc != 0 {
             assert!(cc == 0xFFFFFFFF);
-            assert!(e.encode32() == va);
+            assert!(e.encode() == va);
         } else {
-            assert!(e.encode32() == [0u8; 32]);
+            assert!(e.encode() == [0u8; 32]);
         }
 
         let mut tmp = [0u8; 96];
@@ -1818,7 +1871,7 @@ mod tests {
         tmp[64..96].copy_from_slice(vx);
         for k in 0..97 {
             let c = GFsecp256k1::decode_reduce(&tmp[0..k]);
-            let vc = c.encode32();
+            let vc = c.encode();
             let zc = BigInt::from_bytes_le(Sign::Plus, &vc);
             let zd = BigInt::from_bytes_le(Sign::Plus, &tmp[0..k]) % &zp;
             assert!(zc == zd);
@@ -1869,7 +1922,7 @@ mod tests {
             let (t, r) = s.sqrt();
             assert!(r == 0xFFFFFFFF);
             assert!(t.square().equals(s) == 0xFFFFFFFF);
-            assert!((t.encode32()[0] & 1) == 0);
+            assert!((t.encode()[0] & 1) == 0);
             let (t2, r) = s2.sqrt();
             assert!(r == 0);
             assert!(t2.iszero() == 0xFFFFFFFF);

@@ -122,9 +122,6 @@ pub type Scalar = ModInt256<0x5812631A5CF5D3ED, 0x14DEF9DEA2F79CD6,
                             0x0000000000000000, 0x1000000000000000>;
 
 impl Scalar {
-    /// Scalar encoding length (in bytes).
-    pub const ENC_LEN: usize = 32;
-
     /// Encodes a scalar element into bytes (little-endian).
     pub fn encode(self) -> [u8; 32] {
         self.encode32()
@@ -286,7 +283,7 @@ impl Point {
     ///
     /// Decoding succeeds only if the source slice has length exactly 32
     /// bytes, and contains the canonical encoding of a valid curve
-    /// point. Sicne this method returns an `Option<Point>`, it
+    /// point. Since this method returns an `Option<Point>`, it
     /// inherently leaks (through timing-based side channels) whether
     /// decoding succeeded or not; to avoid that, consider using
     /// `set_decode()`. The decoded point itself, however, does not leak.
@@ -1840,17 +1837,17 @@ impl PublicKey {
         self.verify_inner(sig, true, 0, ctx, m)
     }
 
-    // Verifies a signature on a hashed message.
-    //
-    // This is the "Ed25519ph" mode of RFC 8032 (message is pre-hashed),
-    // also known as "HashEdDSA on Curve25519". The hashed message `hm`
-    // is provided (presumably, that hash value was obtained with
-    // SHA-512; the caller does the hashing itself). A context string is
-    // also provided; it MUST have length at most 255 bytes. Return
-    // value is `true` on a valid signature, `false` otherwise.
-    //
-    // Note: this function is not constant-time; it assumes that the
-    // public key and signature value are public data.
+    /// Verifies a signature on a hashed message.
+    ///
+    /// This is the "Ed25519ph" mode of RFC 8032 (message is pre-hashed),
+    /// also known as "HashEdDSA on Curve25519". The hashed message `hm`
+    /// is provided (presumably, that hash value was obtained with
+    /// SHA-512; the caller does the hashing itself). A context string is
+    /// also provided; it MUST have length at most 255 bytes. Return
+    /// value is `true` on a valid signature, `false` otherwise.
+    ///
+    /// Note: this function is not constant-time; it assumes that the
+    /// public key and signature value are public data.
     pub fn verify_ph(self, sig: &[u8], ctx: &[u8], hm: &[u8]) -> bool {
         self.verify_inner(sig, true, 1, ctx, hm)
     }

@@ -84,3 +84,23 @@ harness = false
 name = "secp256k1"
 path = "benches/secp256k1.rs"
 harness = false
+
+[[bench]]
+name = "gf448"
+path = "benches/gf448.rs"
+harness = false
+
+[[bench]]
+name = "sc448"
+path = "benches/sc448.rs"
+harness = false
+
+[[bench]]
+name = "ed448"
+path = "benches/ed448.rs"
+harness = false
+
+[[bench]]
+name = "x448"
+path = "benches/x448.rs"
+harness = false
