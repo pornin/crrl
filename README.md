@@ -167,10 +167,10 @@ work with standard signature formats. See
 # FROST Threshold Schnorr Signatures
 
 The FROST protocol for a distributed Schnorr signature generation scheme
-has been implemented, as per the v8 draft specification:
-[draft-irtf-cfrg-frost-08](https://datatracker.ietf.org/doc/html/draft-irtf-cfrg-frost-08).
+has been implemented, as per the v14 draft specification:
+[draft-irtf-cfrg-frost-14](https://datatracker.ietf.org/doc/html/draft-irtf-cfrg-frost-14).
 Four ciphersuites are provided, with similar APIs, in the
-`frost::ed25519`, `frost::ristretto255`, `frost::p256` and
+`frost::ed25519`, `frost::ristretto255`, `frost::ed448`, `frost::p256` and
 `frost::secp256k1` modules. A sample code showing how to use the API is
 provided in the [frost-sample.rs](extra/frost-sample.rs) file.
 
