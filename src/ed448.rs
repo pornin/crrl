@@ -1719,18 +1719,22 @@ impl PublicKey {
 
 // ========================================================================
 
-// We hardcode known multiples of the points B, (2^115)*B, (2^225)*B
-// and (2^340)*B, with B being the conventional base point. These are
-// used to speed mulgen() operations up. The points are moreover stored
-// in a affine format (only two coordinates x and y).
+// We hardcode known multiples of the points B, (2^75)*B, (2^150)*B,
+// (2^225)*B, (2^300)*B and (2^375)*B, with B being the conventional
+// base point. These are used to speed mulgen() operations up. The
+// points are moreover stored in a affine format (only two coordinates x
+// and y).
 //
-// The use of four sub-tables is a trade-off. With more sub-tables (e.g.
-// a 6-way split with B, (2^75)*B, (2^150)*B...), some point doublings
-// would be avoided in mulgen(), but the cumulative table size would be
-// larger. In general, we prefer to keep relatively small tables so that
-// use of this code does not kick out of L1 cache too much data and slows
-// down whatever _other_ computations the calling app performs. Each
-// table contains 16 points = 1792 bytes.
+// The use of six sub-tables is a trade-off. With more tables we save on
+// point doublings in mulgen(), but we increase the total table size
+// (each table is 16 points = 1792 bytes), and we would certainly prefer
+// not to exceed the L1 cache size; in fact, we want to use only part of
+// it, because the caller of this code probably has some other tasks to
+// do and may need the L1 cache to retain some data as well.
+//
+// If we used extended coordinates (with an extra t = x*y), then tables
+// would be 50% larger, and, for the same size budget, we would have only
+// 4 tables.
 
 /// A point in affine coordinates (x,y).
 #[derive(Clone, Copy, Debug)]

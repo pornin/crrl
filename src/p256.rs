@@ -2326,7 +2326,7 @@ impl PublicKey {
     /// Verifies a truncated signature on a given hashed message.
     ///
     /// The signature (`sig`) MUST have length 64 bytes and MUST have
-    /// been prepated with `PrivateKey::prepare_truncate()`. The last
+    /// been prepared with `PrivateKey::prepare_truncate()`. The last
     /// `rm` bits are ignored (i.e. the last `floor(rm/8)` bytes are
     /// ignored, as well as the top `rm%8` bits of the last non-ignored
     /// byte.
