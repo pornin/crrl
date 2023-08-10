@@ -1,3 +1,5 @@
+#![cfg(feature = "ed448")]
+
 mod util;
 use util::core_cycles;
 

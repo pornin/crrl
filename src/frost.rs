@@ -62,6 +62,7 @@
 //! [frost-sample.rs]: https://github.com/pornin/crrl/extra/frost-sample.rs
 
 #![allow(non_snake_case)]
+#![allow(unused_macros)]
 
 /// Most functions are generic, provided that the relevant Point and
 /// Scalar types are in scope, and a few constants defined. This macro
@@ -1619,6 +1620,7 @@ macro_rules! define_frost_tests { () => {
 // ========================================================================
 
 /// FROST(Ed25519, SHA-512)
+#[cfg(feature = "ed25519")]
 pub mod ed25519 {
 
     pub use crate::ed25519::{Point, Scalar};
@@ -1772,6 +1774,7 @@ pub mod ed25519 {
 }
 
 /// FROST(ristretto255, SHA-512)
+#[cfg(feature = "ristretto255")]
 pub mod ristretto255 {
     pub use crate::ristretto255::{Point, Scalar};
     use sha2::{Sha512, Digest};
@@ -1909,6 +1912,7 @@ pub mod ristretto255 {
 }
 
 /// FROST(Ed448, SHAKE256)
+#[cfg(feature = "ed448")]
 pub mod ed448 {
 
     pub use crate::ed448::{Point, Scalar};
@@ -2087,6 +2091,7 @@ pub mod ed448 {
 }
 
 /// FROST(P-256, SHA-256)
+#[cfg(feature = "p256")]
 pub mod p256 {
     pub use crate::p256::{Point, Scalar};
     use sha2::{Sha256, Digest};
@@ -2269,6 +2274,7 @@ pub mod p256 {
 }
 
 /// FROST(secp256k1, SHA-256)
+#[cfg(feature = "secp256k1")]
 pub mod secp256k1 {
     pub use crate::secp256k1::{Point, Scalar};
     use sha2::{Sha256, Digest};

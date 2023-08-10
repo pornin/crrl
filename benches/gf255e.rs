@@ -1,3 +1,5 @@
+#![cfg(feature = "gf255e")]
+
 mod util;
 use util::core_cycles;
 

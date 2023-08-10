@@ -1,3 +1,5 @@
+#![cfg(feature = "modint256")]
+
 mod util;
 use util::core_cycles;
 

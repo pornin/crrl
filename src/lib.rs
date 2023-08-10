@@ -100,22 +100,27 @@
 
 #[cfg(all(feature = "alloc", not(feature = "std")))]
 #[macro_use]
+#[allow(unused_imports)]
 extern crate alloc;
 
 #[cfg(feature = "std")]
 #[macro_use]
+#[allow(unused_imports)]
 extern crate std;
 
 #[cfg(all(feature = "alloc", not(feature = "std")))]
+#[allow(unused_imports)]
 pub(crate) use alloc::vec::Vec;
 
 #[cfg(feature = "std")]
+#[allow(unused_imports)]
 pub(crate) use std::vec::Vec;
 
 /// The `rand_core` types are re-exported so that users of crrl do not
 /// have to worry about using the exact correct version of `rand_core`.
 pub use rand_core::{CryptoRng, RngCore, Error as RngError};
 
+#[allow(unused_macros)]
 macro_rules! static_assert {
     ($condition:expr) => {
         let _ = &[()][1 - ($condition) as usize];
@@ -124,18 +129,39 @@ macro_rules! static_assert {
 
 pub mod backend;
 pub mod field;
+
+#[cfg(feature = "ed25519")]
 pub mod ed25519;
+
+#[cfg(feature = "x25519")]
 pub mod x25519;
+
+#[cfg(feature = "ristretto255")]
 pub mod ristretto255;
+
+#[cfg(feature = "jq255e")]
 pub mod jq255e;
+
+#[cfg(feature = "jq255s")]
 pub mod jq255s;
+
+#[cfg(feature = "p256")]
 pub mod p256;
+
+#[cfg(feature = "secp256k1")]
 pub mod secp256k1;
+
+#[cfg(feature = "ed448")]
 pub mod ed448;
+
+#[cfg(feature = "x448")]
 pub mod x448;
+
+#[cfg(feature = "decaf448")]
 pub mod decaf448;
 
-#[cfg(feature = "alloc")]
+#[cfg(all(feature = "alloc", feature = "frost"))]
 pub mod frost;
 
+#[cfg(feature = "lms")]
 pub mod lms;

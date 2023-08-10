@@ -14,6 +14,7 @@ use core::convert::TryFrom;
 // If a larger n is provided as parameter, then the algorithm still
 // terminates, but the real (c0, c1) may be larger than 128 bits, and thus
 // only truncated results are returned.
+#[allow(dead_code)]
 pub(crate) fn lagrange253_vartime(k: &[u32; 8], n: &[u32; 8]) -> (i128, i128) {
     let (v0, v1) = lagrange256_vartime(k, n, 254);
     let mut c0 = v0[3] as u128;
@@ -405,6 +406,7 @@ define_lagrange!(lagrange512_vartime, ZInt256, ZInt512, ZInt768, ZInt1024);
 // comes first.
 // If the minimal-size vector does not fit in (c0,c1) then it is truncated.
 // c0 and c1 use _signed_ little-endian notation.
+#[allow(dead_code)]
 pub(crate) fn lagrange_vartime(k: &[u32], n: &[u32], max_bitlen: u32,
     c0: &mut [u32], c1: &mut [u32])
 {

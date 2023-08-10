@@ -25,3 +25,13 @@ pub fn core_cycles() -> u64 {
     }
     x
 }
+
+#[cfg(target_arch = "riscv64")]
+pub fn core_cycles() -> u64 {
+    use core::arch::asm;
+    let mut x: u64;
+    unsafe {
+        asm!("rdcycle {}", out(reg) x);
+    }
+    x
+}

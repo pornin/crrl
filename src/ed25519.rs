@@ -322,14 +322,14 @@ impl Point {
         let (X2, Y2, Z2, T2) = (&rhs.X, &rhs.Y, &rhs.Z, &rhs.T);
 
         // Formulas from RFC 8032, section 5.1.4.
-        let A = (Y1 - X1) * (Y2 - X2);
-        let B = (Y1 + X1) * (Y2 + X2);
+        let A = (Y1.sub_noreduce(X1)) * (Y2.sub_noreduce(X2));
+        let B = (Y1.add_noreduce(X1)) * (Y2.add_noreduce(X2));
         let C = T1 * Self::D2 * T2;
-        let D = Z1.mul2() * Z2;
-        let E = B - A;
-        let F = D - C;
-        let G = D + C;
-        let H = B + A;
+        let D = Z1.mul2_noreduce() * Z2;
+        let E = B.sub_noreduce(&A);
+        let F = D.sub_noreduce(&C);
+        let G = D.add_noreduce(&C);
+        let H = B.add_noreduce(&A);
         self.X = E * F;
         self.Y = G * H;
         self.T = E * H;
@@ -359,14 +359,12 @@ impl Point {
         let (ypx, ymx, t2d) = (&rhs.ypx, &rhs.ymx, &rhs.t2d);
 
         // Formulas from RFC 8032, section 5.1.4.
-        let A = (Y1 - X1) * ymx;
-        let B = (Y1 + X1) * ypx;
+        let A = (Y1.sub_noreduce(X1)) * ymx;
+        let B = (Y1.add_noreduce(X1)) * ypx;
         let C = T1 * t2d;
-        let D = Z1.mul2();
-        let E = B - A;
-        let F = D - C;
-        let G = D + C;
-        let H = B + A;
+        let E = B.sub_noreduce(&A);
+        let (G, F) = Z1.mul2add_mul2sub_noreduce(&C);
+        let H = B.add_noreduce(&A);
         self.X = E * F;
         self.Y = G * H;
         self.T = E * H;
@@ -384,14 +382,12 @@ impl Point {
         // merge the negation of the second operand:
         //   ypx and ymx are swapped
         //   t2d is negated
-        let A = (Y1 - X1) * ypx;
-        let B = (Y1 + X1) * ymx;
+        let A = (Y1.sub_noreduce(X1)) * ypx;
+        let B = (Y1.add_noreduce(X1)) * ymx;
         let C = T1 * t2d;
-        let D = Z1.mul2();
-        let E = B - A;
-        let F = D + C;
-        let G = D - C;
-        let H = B + A;
+        let E = B.sub_noreduce(&A);
+        let (F, G) = Z1.mul2add_mul2sub_noreduce(&C);
+        let H = B.add_noreduce(&A);
         self.X = E * F;
         self.Y = G * H;
         self.T = E * H;
@@ -405,11 +401,8 @@ impl Point {
         // Formulas from RFC 8032, section 5.1.4 (special doubling case).
         let A = X.square();
         let B = Y.square();
-        let C = Z.square().mul2();
-        let H = A + B;
-        let G = A - B;
-        let E = H - (X + Y).square();
-        let F = C + G;
+        let (H, E) = A.add_addsub_noreduce(&B, &(X.add_noreduce(Y)).square());
+        let (G, F) = A.sub_subadd2_noreduce(&B, &Z.square());
         self.X = E * F;
         self.Y = G * H;
         self.T = E * H;
@@ -442,11 +435,9 @@ impl Point {
         for i in 0..n {
             let A = X.square();
             let B = Y.square();
-            let C = Z.square().mul2();
-            let H = A + B;
-            let G = A - B;
-            let E = H - ((X as &GF25519) + (Y as &GF25519)).square();
-            let F = C + G;
+            let (H, E) = A.add_addsub_noreduce(
+                &B, &(X.add_noreduce(Y)).square());
+            let (G, F) = A.sub_subadd2_noreduce(&B, &Z.square());
             *Y = G * H;
             *X = E * F;
             *Z = F * G;

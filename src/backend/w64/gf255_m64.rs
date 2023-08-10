@@ -1,11 +1,11 @@
 use core::ops::{Add, AddAssign, Div, DivAssign, Mul, MulAssign, Neg, Sub, SubAssign};
 use core::convert::TryFrom;
 
-use super::{addcarry_u32, subborrow_u32, umull, umull_add, umull_add2, umull_x2, umull_x2_add, sgnw, lzcnt};
+use super::{addcarry_u64, subborrow_u64, umull, umull_x2, umull_x2_add, sgnw, lzcnt};
 use super::lagrange::lagrange253_vartime;
 
 #[derive(Clone, Copy, Debug)]
-pub struct GF255<const MQ: u64>([u32; 8]);
+pub struct GF255<const MQ: u64>([u64; 4]);
 
 /// Special container for "not reduced" values returned by `add_noreduce()`
 /// and `sub_noreduce()`; for this code, this is an alias on `GF255<MQ>`
@@ -24,7 +24,7 @@ impl<const MQ: u64> GF255<MQ> {
     // Primality cannot easily be tested at compile-time, but we check
     // the other properties.
     //
-    // Tighest restriction on MQ is from set_sqrt(), which assumes that
+    // Tightest restriction on MQ is from set_sqrt_ext(), which assumes that
     // only the lowest 15 bits of q may be non-zero. Other arithmetic
     // functions have looser requirements (set_mul() and set_square() need
     // MQ <= 2^31 - 1).
@@ -42,29 +42,21 @@ impl<const MQ: u64> GF255<MQ> {
     // (this is the type parameter MQ, as a 32-bit integer)
     pub const T255_MINUS_Q: u32 = MQ as u32;
 
-    // Modulus q in base 2^32 (low-to-high order).
-    pub const MODULUS: [u32; 8] = [
-        (MQ as u32).wrapping_neg(),
-        0xFFFFFFFF,
-        0xFFFFFFFF,
-        0xFFFFFFFF,
-        0xFFFFFFFF,
-        0xFFFFFFFF,
-        0xFFFFFFFF,
-        0x7FFFFFFF
+    // Modulus q in base 2^64 (low-to-high order).
+    pub const MODULUS: [u64; 4] = [
+        MQ.wrapping_neg(),
+        0xFFFFFFFFFFFFFFFF,
+        0xFFFFFFFFFFFFFFFF,
+        0x7FFFFFFFFFFFFFFF
     ];
 
-    pub const ZERO: GF255<MQ> = GF255::<MQ>([ 0, 0, 0, 0, 0, 0, 0, 0 ]);
-    pub const ONE: GF255<MQ> = GF255::<MQ>([ 1, 0, 0, 0, 0, 0, 0, 0 ]);
+    pub const ZERO: GF255<MQ> = GF255::<MQ>([ 0, 0, 0, 0 ]);
+    pub const ONE: GF255<MQ> = GF255::<MQ>([ 1, 0, 0, 0 ]);
     pub const MINUS_ONE: GF255<MQ> = GF255::<MQ>([
-        ((MQ + 1) as u32).wrapping_neg(),
-        0xFFFFFFFF,
-        0xFFFFFFFF,
-        0xFFFFFFFF,
-        0xFFFFFFFF,
-        0xFFFFFFFF,
-        0xFFFFFFFF,
-        0x7FFFFFFF
+        (MQ + 1).wrapping_neg(),
+        0xFFFFFFFFFFFFFFFF,
+        0xFFFFFFFFFFFFFFFF,
+        0x7FFFFFFFFFFFFFFF,
     ]);
 
     // 1/2^508 in the field, as a constant; this is used when computing
@@ -74,45 +66,25 @@ impl<const MQ: u64> GF255<MQ> {
     // Create an element from a 256-bit value (implicitly reduced modulo
     // the field order) provided as four 64-bit limbs (in low-to-high order).
     pub const fn w64le(x0: u64, x1: u64, x2: u64, x3: u64) -> Self {
-        Self([
-            x0 as u32, (x0 >> 32) as u32,
-            x1 as u32, (x1 >> 32) as u32,
-            x2 as u32, (x2 >> 32) as u32,
-            x3 as u32, (x3 >> 32) as u32,
-        ])
+        Self([ x0, x1, x2, x3 ])
     }
 
     // Create an element from a 256-bit value (implicitly reduced modulo
     // the field order) provided as four 64-bit limbs (in high-to-low order).
     pub const fn w64be(x3: u64, x2: u64, x1: u64, x0: u64) -> Self {
-        Self([
-            x0 as u32, (x0 >> 32) as u32,
-            x1 as u32, (x1 >> 32) as u32,
-            x2 as u32, (x2 >> 32) as u32,
-            x3 as u32, (x3 >> 32) as u32,
-        ])
+        Self([ x0, x1, x2, x3 ])
     }
 
     // Create an element from a 256-bit value (implicitly reduced modulo
     // the field order) provided as four 64-bit limbs (in low-to-high order).
     pub fn from_w64le(x0: u64, x1: u64, x2: u64, x3: u64) -> Self {
-        Self([
-            x0 as u32, (x0 >> 32) as u32,
-            x1 as u32, (x1 >> 32) as u32,
-            x2 as u32, (x2 >> 32) as u32,
-            x3 as u32, (x3 >> 32) as u32,
-        ])
+        Self([ x0, x1, x2, x3 ])
     }
 
     // Create an element from a 256-bit value (implicitly reduced modulo
     // the field order) provided as four 64-bit limbs (in high-to-low order).
     pub fn from_w64be(x3: u64, x2: u64, x1: u64, x0: u64) -> Self {
-        Self([
-            x0 as u32, (x0 >> 32) as u32,
-            x1 as u32, (x1 >> 32) as u32,
-            x2 as u32, (x2 >> 32) as u32,
-            x3 as u32, (x3 >> 32) as u32,
-        ])
+        Self([ x0, x1, x2, x3 ])
     }
 
     // Create an element by converting the provided integer.
@@ -121,17 +93,13 @@ impl<const MQ: u64> GF255<MQ> {
     #[inline(always)]
     pub fn from_i32(x: i32) -> Self {
         // We add q to ensure a nonnegative integer.
-        let x0 = x as u32;
-        let xh = (x >> 31) as u32;
-        let (d0, cc) = addcarry_u32(x0, (MQ as u32).wrapping_neg(), 0);
-        let (d1, cc) = addcarry_u32(xh, 0xFFFFFFFF, cc);
-        let (d2, cc) = addcarry_u32(xh, 0xFFFFFFFF, cc);
-        let (d3, cc) = addcarry_u32(xh, 0xFFFFFFFF, cc);
-        let (d4, cc) = addcarry_u32(xh, 0xFFFFFFFF, cc);
-        let (d5, cc) = addcarry_u32(xh, 0xFFFFFFFF, cc);
-        let (d6, cc) = addcarry_u32(xh, 0xFFFFFFFF, cc);
-        let (d7, _)  = addcarry_u32(xh, 0x7FFFFFFF, cc);
-        Self([ d0, d1, d2, d3, d4, d5, d6, d7 ])
+        let x0 = (x as i64) as u64;
+        let xh = ((x as i64) >> 63) as u64;
+        let (d0, cc) = addcarry_u64(x0, MQ.wrapping_neg(), 0);
+        let (d1, cc) = addcarry_u64(xh, 0xFFFFFFFFFFFFFFFF, cc);
+        let (d2, cc) = addcarry_u64(xh, 0xFFFFFFFFFFFFFFFF, cc);
+        let (d3, _)  = addcarry_u64(xh, 0x7FFFFFFFFFFFFFFF, cc);
+        Self([ d0, d1, d2, d3 ])
     }
 
     // Create an element by converting the provided integer.
@@ -146,18 +114,13 @@ impl<const MQ: u64> GF255<MQ> {
     #[inline(always)]
     pub fn from_i64(x: i64) -> Self {
         // We add q to ensure a nonnegative integer.
-        let x0 = x as u32;
-        let x1 = (x >> 32) as u32;
-        let xh = (x >> 63) as u32;
-        let (d0, cc) = addcarry_u32(x0, (MQ as u32).wrapping_neg(), 0);
-        let (d1, cc) = addcarry_u32(x1, 0xFFFFFFFF, cc);
-        let (d2, cc) = addcarry_u32(xh, 0xFFFFFFFF, cc);
-        let (d3, cc) = addcarry_u32(xh, 0xFFFFFFFF, cc);
-        let (d4, cc) = addcarry_u32(xh, 0xFFFFFFFF, cc);
-        let (d5, cc) = addcarry_u32(xh, 0xFFFFFFFF, cc);
-        let (d6, cc) = addcarry_u32(xh, 0xFFFFFFFF, cc);
-        let (d7, _)  = addcarry_u32(xh, 0x7FFFFFFF, cc);
-        Self([ d0, d1, d2, d3, d4, d5, d6, d7 ])
+        let x0 = x as u64;
+        let xh = (x >> 63) as u64;
+        let (d0, cc) = addcarry_u64(x0, MQ.wrapping_neg(), 0);
+        let (d1, cc) = addcarry_u64(xh, 0xFFFFFFFFFFFFFFFF, cc);
+        let (d2, cc) = addcarry_u64(xh, 0xFFFFFFFFFFFFFFFF, cc);
+        let (d3, _)  = addcarry_u64(xh, 0x7FFFFFFFFFFFFFFF, cc);
+        Self([ d0, d1, d2, d3 ])
     }
 
     // Create an element by converting the provided integer.
@@ -172,20 +135,14 @@ impl<const MQ: u64> GF255<MQ> {
     #[inline(always)]
     pub fn from_i128(x: i128) -> Self {
         // We add q to ensure a nonnegative integer.
-        let x0 = x as u32;
-        let x1 = (x >> 32) as u32;
-        let x2 = (x >> 64) as u32;
-        let x3 = (x >> 96) as u32;
-        let xh = (x >> 127) as u32;
-        let (d0, cc) = addcarry_u32(x0, (MQ as u32).wrapping_neg(), 0);
-        let (d1, cc) = addcarry_u32(x1, 0xFFFFFFFF, cc);
-        let (d2, cc) = addcarry_u32(x2, 0xFFFFFFFF, cc);
-        let (d3, cc) = addcarry_u32(x3, 0xFFFFFFFF, cc);
-        let (d4, cc) = addcarry_u32(xh, 0xFFFFFFFF, cc);
-        let (d5, cc) = addcarry_u32(xh, 0xFFFFFFFF, cc);
-        let (d6, cc) = addcarry_u32(xh, 0xFFFFFFFF, cc);
-        let (d7, _)  = addcarry_u32(xh, 0x7FFFFFFF, cc);
-        Self([ d0, d1, d2, d3, d4, d5, d6, d7 ])
+        let x0 = x as u64;
+        let x1 = (x >> 64) as u64;
+        let xh = (x >> 127) as u64;
+        let (d0, cc) = addcarry_u64(x0, MQ.wrapping_neg(), 0);
+        let (d1, cc) = addcarry_u64(x1, 0xFFFFFFFFFFFFFFFF, cc);
+        let (d2, cc) = addcarry_u64(xh, 0xFFFFFFFFFFFFFFFF, cc);
+        let (d3, _)  = addcarry_u64(xh, 0x7FFFFFFFFFFFFFFF, cc);
+        Self([ d0, d1, d2, d3 ])
     }
 
     // Create an element by converting the provided integer.
@@ -197,30 +154,28 @@ impl<const MQ: u64> GF255<MQ> {
     #[inline]
     fn set_add(&mut self, rhs: &Self) {
         // 1. Addition with carry
-        let (d, mut cc) = addcarry_u32(self.0[0], rhs.0[0], 0);
-        self.0[0] = d;
-        for i in 1..8 {
-            let (d, ee) = addcarry_u32(self.0[i], rhs.0[i], cc);
-            self.0[i] = d;
-            cc = ee;
-        }
+        let (d0, cc) = addcarry_u64(self.0[0], rhs.0[0], 0);
+        let (d1, cc) = addcarry_u64(self.0[1], rhs.0[1], cc);
+        let (d2, cc) = addcarry_u64(self.0[2], rhs.0[2], cc);
+        let (d3, cc) = addcarry_u64(self.0[3], rhs.0[3], cc);
 
         // 2. In case of an output carry, subtract 2*q, i.e. add 2*MQ.
-        let (d, mut cc) = addcarry_u32(self.0[0],
-            (cc as u32).wrapping_neg() & (2 * (MQ as u32)), 0);
-        self.0[0] = d;
-        for i in 1..8 {
-            let (d, ee) = addcarry_u32(self.0[i], 0, cc);
-            self.0[i] = d;
-            cc = ee;
-        }
+        let (d0, cc) = addcarry_u64(d0,
+            (cc as u64).wrapping_neg() & (2 * MQ), 0);
+        let (d1, cc) = addcarry_u64(d1, 0, cc);
+        let (d2, cc) = addcarry_u64(d2, 0, cc);
+        let (d3, cc) = addcarry_u64(d3, 0, cc);
 
         // 3. If there is again an extra carry, then we have to subtract 2*q
         // again. In that case, original sum was at least 2^257 - 2*MQ, and
         // the low word is now lower than 2*MQ, so adding 2*MQ to it will
         // not overflow.
-        self.0[0] = self.0[0].wrapping_add(
-            (cc as u32).wrapping_neg() & (2 * (MQ as u32)));
+        let d0 = d0.wrapping_add((cc as u64).wrapping_neg() & (2 * MQ));
+
+        self.0[0] = d0;
+        self.0[1] = d1;
+        self.0[2] = d2;
+        self.0[3] = d3;
     }
 
     /// Return self + rhs (no reduction).
@@ -275,56 +230,49 @@ impl<const MQ: u64> GF255<MQ> {
     #[inline]
     fn set_sub(&mut self, rhs: &Self) {
         // 1. Subtraction with borrow
-        let (d, mut cc) = subborrow_u32(self.0[0], rhs.0[0], 0);
-        self.0[0] = d;
-        for i in 1..8 {
-            let (d, ee) = subborrow_u32(self.0[i], rhs.0[i], cc);
-            self.0[i] = d;
-            cc = ee;
-        }
+        let (d0, cc) = subborrow_u64(self.0[0], rhs.0[0], 0);
+        let (d1, cc) = subborrow_u64(self.0[1], rhs.0[1], cc);
+        let (d2, cc) = subborrow_u64(self.0[2], rhs.0[2], cc);
+        let (d3, cc) = subborrow_u64(self.0[3], rhs.0[3], cc);
 
         // 2. In case of an output borrow, add 2*q, i.e. subtract 2*MQ.
-        let (d, mut cc) = subborrow_u32(self.0[0],
-            (cc as u32).wrapping_neg() & (2 * (MQ as u32)), 0);
-        self.0[0] = d;
-        for i in 1..8 {
-            let (d, ee) = subborrow_u32(self.0[i], 0, cc);
-            self.0[i] = d;
-            cc = ee;
-        }
+        let (d0, cc) = subborrow_u64(d0,
+            (cc as u64).wrapping_neg() & (2 * MQ), 0);
+        let (d1, cc) = subborrow_u64(d1, 0, cc);
+        let (d2, cc) = subborrow_u64(d2, 0, cc);
+        let (d3, cc) = subborrow_u64(d3, 0, cc);
 
         // 3. If there is again a borrow, then add 2*q again. In that case,
-        // the low word must be at least 2^32 - 2*MQ, and the extra
+        // the low word must be at least 2^64 - 2*MQ, and the extra
         // subtraction won't trigger a new carry.
-        self.0[0] = self.0[0].wrapping_sub(
-            (cc as u32).wrapping_neg() & (2 * (MQ as u32)));
+        let d0 = d0.wrapping_sub((cc as u64).wrapping_neg() & (2 * MQ));
+
+        self.0[0] = d0;
+        self.0[1] = d1;
+        self.0[2] = d2;
+        self.0[3] = d3;
     }
 
     // Negate this value (in place).
     #[inline]
     pub fn set_neg(&mut self) {
         // 1. Compute 2*q - self over 256 bits.
-        let (d, mut cc) = subborrow_u32(
-            (2 * (MQ as u32)).wrapping_neg(), self.0[0], 0);
-        self.0[0] = d;
-        for i in 1..8 {
-            let (d, ee) = subborrow_u32(0xFFFFFFFF, self.0[i], cc);
-            self.0[i] = d;
-            cc = ee;
-        }
+        let (d0, cc) = subborrow_u64((2 * MQ).wrapping_neg(), self.0[0], 0);
+        let (d1, cc) = subborrow_u64(1u64.wrapping_neg(), self.0[1], cc);
+        let (d2, cc) = subborrow_u64(1u64.wrapping_neg(), self.0[2], cc);
+        let (d3, cc) = subborrow_u64(1u64.wrapping_neg(), self.0[3], cc);
 
         // 2. If the result is negative, add back q = 2^255 - MQ.
-        let w = (cc as u32).wrapping_neg();
-        let (d, mut cc) = addcarry_u32(self.0[0],
-            w & (MQ as u32).wrapping_neg(), 0);
-        self.0[0] = d;
-        for i in 1..7 {
-            let (d, ee) = addcarry_u32(w, self.0[i], cc);
-            self.0[i] = d;
-            cc = ee;
-        }
-        let (d, _) = addcarry_u32(self.0[7], w >> 1, cc);
-        self.0[7] = d;
+        let e = (cc as u64).wrapping_neg();
+        let (d0, cc) = addcarry_u64(d0, e & MQ.wrapping_neg(), 0);
+        let (d1, cc) = addcarry_u64(d1, e, cc);
+        let (d2, cc) = addcarry_u64(d2, e, cc);
+        let (d3, _) = addcarry_u64(d3, e >> 1, cc);
+
+        self.0[0] = d0;
+        self.0[1] = d1;
+        self.0[2] = d2;
+        self.0[3] = d3;
     }
 
     // Conditionally copy the provided value ('a') into self:
@@ -333,9 +281,11 @@ impl<const MQ: u64> GF255<MQ> {
     // ctl MUST be equal to 0 or 0xFFFFFFFF.
     #[inline]
     pub fn set_cond(&mut self, a: &Self, ctl: u32) {
-        for i in 0..8 {
-            self.0[i] ^= ctl & (self.0[i] ^ a.0[i]);
-        }
+        let cw = ((ctl as i32) as i64) as u64;
+        self.0[0] ^= cw & (self.0[0] ^ a.0[0]);
+        self.0[1] ^= cw & (self.0[1] ^ a.0[1]);
+        self.0[2] ^= cw & (self.0[2] ^ a.0[2]);
+        self.0[3] ^= cw & (self.0[3] ^ a.0[3]);
     }
 
     // Return a value equal to either a0 (if ctl == 0) or a1 (if
@@ -352,34 +302,33 @@ impl<const MQ: u64> GF255<MQ> {
     // ctl MUST be either 0x00000000 or 0xFFFFFFFF.
     #[inline]
     pub fn cswap(a: &mut Self, b: &mut Self, ctl: u32) {
-        for i in 0..8 {
-            let t = ctl & (a.0[i] ^ b.0[i]);
-            a.0[i] ^= t;
-            b.0[i] ^= t;
-        }
+        let cw = ((ctl as i32) as i64) as u64;
+        let t = cw & (a.0[0] ^ b.0[0]); a.0[0] ^= t; b.0[0] ^= t;
+        let t = cw & (a.0[1] ^ b.0[1]); a.0[1] ^= t; b.0[1] ^= t;
+        let t = cw & (a.0[2] ^ b.0[2]); a.0[2] ^= t; b.0[2] ^= t;
+        let t = cw & (a.0[3] ^ b.0[3]); a.0[3] ^= t; b.0[3] ^= t;
     }
 
     #[inline]
     fn set_half(&mut self) {
         // 1. Right-shift by 1 bit; keep dropped bit in 'tt' (expanded)
+        let d0 = (self.0[0] >> 1) | (self.0[1] << 63);
+        let d1 = (self.0[1] >> 1) | (self.0[2] << 63);
+        let d2 = (self.0[2] >> 1) | (self.0[3] << 63);
+        let d3 = self.0[3] >> 1;
         let tt = (self.0[0] & 1).wrapping_neg();
-        for i in 0..7 {
-            self.0[i] = (self.0[i] >> 1) | (self.0[i + 1] << 31);
-        }
-        self.0[7] = self.0[7] >> 1;
 
         // 2. If the dropped bit was 1, add back (q+1)/2. Since the value
         // was right-shifted, and (q+1)/2 < 2^255, this cannot overflow.
-        let (d, mut cc) = addcarry_u32(self.0[0],
-            tt & (((MQ as u32) - 1) >> 1).wrapping_neg(), 0);
-        self.0[0] = d;
-        for i in 1..7 {
-            let (d, ee) = addcarry_u32(self.0[i], tt, cc);
-            self.0[i] = d;
-            cc = ee;
-        }
-        let (d, _) = addcarry_u32(self.0[7], tt >> 2, cc);
-        self.0[7] = d;
+        let (d0, cc) = addcarry_u64(d0, tt & ((MQ - 1) >> 1).wrapping_neg(), 0);
+        let (d1, cc) = addcarry_u64(d1, tt, cc);
+        let (d2, cc) = addcarry_u64(d2, tt, cc);
+        let (d3, _) = addcarry_u64(d3, tt >> 2, cc);
+
+        self.0[0] = d0;
+        self.0[1] = d1;
+        self.0[2] = d2;
+        self.0[3] = d3;
     }
 
     #[inline(always)]
@@ -393,24 +342,25 @@ impl<const MQ: u64> GF255<MQ> {
     #[inline]
     pub fn set_mul2(&mut self) {
         // 1. Extract top bits.
-        let tt = self.0[7] >> 30;
+        let tt = self.0[3] >> 62;
 
         // 2. Left-shift (also clearing the extracted bits).
-        self.0[7] = ((self.0[7] << 1) & 0x7FFFFFFF) | (self.0[6] >> 31);
-        for i in (1..7).rev() {
-            self.0[i] = (self.0[i] << 1) | (self.0[i - 1] >> 31);
-        }
-        self.0[0] = self.0[0] << 1;
+        let d0 = self.0[0] << 1;
+        let d1 = (self.0[0] >> 63) | (self.0[1] << 1);
+        let d2 = (self.0[1] >> 63) | (self.0[2] << 1);
+        let d3 = (self.0[2] >> 63) | ((self.0[3] << 1) & 0x7FFFFFFFFFFFFFFF);
 
         // 3. Add back the top bits with reduction. Since we extracted
         // one more bit than needed, this cannot overflow.
-        let (d, mut cc) = addcarry_u32(self.0[0], tt * (MQ as u32), 0);
-        self.0[0] = d;
-        for i in 1..8 {
-            let (d, ee) = addcarry_u32(self.0[i], 0, cc);
-            self.0[i] = d;
-            cc = ee;
-        }
+        let (d0, cc) = addcarry_u64(d0, tt * MQ, 0);
+        let (d1, cc) = addcarry_u64(d1, 0, cc);
+        let (d2, cc) = addcarry_u64(d2, 0, cc);
+        let (d3, _)  = addcarry_u64(d3, 0, cc);
+
+        self.0[0] = d0;
+        self.0[1] = d1;
+        self.0[2] = d2;
+        self.0[3] = d3;
     }
 
     #[inline(always)]
@@ -424,24 +374,25 @@ impl<const MQ: u64> GF255<MQ> {
     #[inline]
     pub fn set_mul4(&mut self) {
         // 1. Extract top bits.
-        let tt = self.0[7] >> 29;
+        let tt = self.0[3] >> 61;
 
         // 2. Left-shift (also clearing the extracted bits).
-        self.0[7] = ((self.0[7] << 2) & 0x7FFFFFFF) | (self.0[6] >> 30);
-        for i in (1..7).rev() {
-            self.0[i] = (self.0[i] << 2) | (self.0[i - 1] >> 30);
-        }
-        self.0[0] = self.0[0] << 2;
+        let d0 = self.0[0] << 2;
+        let d1 = (self.0[0] >> 62) | (self.0[1] << 2);
+        let d2 = (self.0[1] >> 62) | (self.0[2] << 2);
+        let d3 = (self.0[2] >> 62) | ((self.0[3] << 2) & 0x7FFFFFFFFFFFFFFF);
 
         // 3. Add back the top bits with reduction. Since we extracted
         // one more bit than needed, this cannot overflow.
-        let (d, mut cc) = addcarry_u32(self.0[0], tt * (MQ as u32), 0);
-        self.0[0] = d;
-        for i in 1..8 {
-            let (d, ee) = addcarry_u32(self.0[i], 0, cc);
-            self.0[i] = d;
-            cc = ee;
-        }
+        let (d0, cc) = addcarry_u64(d0, tt * MQ, 0);
+        let (d1, cc) = addcarry_u64(d1, 0, cc);
+        let (d2, cc) = addcarry_u64(d2, 0, cc);
+        let (d3, _)  = addcarry_u64(d3, 0, cc);
+
+        self.0[0] = d0;
+        self.0[1] = d1;
+        self.0[2] = d2;
+        self.0[3] = d3;
     }
 
     #[inline(always)]
@@ -455,24 +406,25 @@ impl<const MQ: u64> GF255<MQ> {
     #[inline]
     pub fn set_mul8(&mut self) {
         // 1. Extract top bits.
-        let tt = self.0[7] >> 28;
+        let tt = self.0[3] >> 60;
 
         // 2. Left-shift (also clearing the extracted bits).
-        self.0[7] = ((self.0[7] << 3) & 0x7FFFFFFF) | (self.0[6] >> 29);
-        for i in (1..7).rev() {
-            self.0[i] = (self.0[i] << 3) | (self.0[i - 1] >> 29);
-        }
-        self.0[0] = self.0[0] << 3;
+        let d0 = self.0[0] << 3;
+        let d1 = (self.0[0] >> 61) | (self.0[1] << 3);
+        let d2 = (self.0[1] >> 61) | (self.0[2] << 3);
+        let d3 = (self.0[2] >> 61) | ((self.0[3] << 3) & 0x7FFFFFFFFFFFFFFF);
 
         // 3. Add back the top bits with reduction. Since we extracted
         // one more bit than needed, this cannot overflow.
-        let (d, mut cc) = addcarry_u32(self.0[0], tt * (MQ as u32), 0);
-        self.0[0] = d;
-        for i in 1..8 {
-            let (d, ee) = addcarry_u32(self.0[i], 0, cc);
-            self.0[i] = d;
-            cc = ee;
-        }
+        let (d0, cc) = addcarry_u64(d0, tt * MQ, 0);
+        let (d1, cc) = addcarry_u64(d1, 0, cc);
+        let (d2, cc) = addcarry_u64(d2, 0, cc);
+        let (d3, _)  = addcarry_u64(d3, 0, cc);
+
+        self.0[0] = d0;
+        self.0[1] = d1;
+        self.0[2] = d2;
+        self.0[3] = d3;
     }
 
     #[inline(always)]
@@ -486,24 +438,25 @@ impl<const MQ: u64> GF255<MQ> {
     #[inline]
     pub fn set_mul16(&mut self) {
         // 1. Extract top bits.
-        let tt = self.0[7] >> 27;
+        let tt = self.0[3] >> 59;
 
         // 2. Left-shift (also clearing the extracted bits).
-        self.0[7] = ((self.0[7] << 4) & 0x7FFFFFFF) | (self.0[6] >> 28);
-        for i in (1..7).rev() {
-            self.0[i] = (self.0[i] << 4) | (self.0[i - 1] >> 28);
-        }
-        self.0[0] = self.0[0] << 4;
+        let d0 = self.0[0] << 4;
+        let d1 = (self.0[0] >> 60) | (self.0[1] << 4);
+        let d2 = (self.0[1] >> 60) | (self.0[2] << 4);
+        let d3 = (self.0[2] >> 60) | ((self.0[3] << 4) & 0x7FFFFFFFFFFFFFFF);
 
         // 3. Add back the top bits with reduction. Since we extracted
         // one more bit than needed, this cannot overflow.
-        let (d, mut cc) = addcarry_u32(self.0[0], tt * (MQ as u32), 0);
-        self.0[0] = d;
-        for i in 1..8 {
-            let (d, ee) = addcarry_u32(self.0[i], 0, cc);
-            self.0[i] = d;
-            cc = ee;
-        }
+        let (d0, cc) = addcarry_u64(d0, tt * MQ, 0);
+        let (d1, cc) = addcarry_u64(d1, 0, cc);
+        let (d2, cc) = addcarry_u64(d2, 0, cc);
+        let (d3, _)  = addcarry_u64(d3, 0, cc);
+
+        self.0[0] = d0;
+        self.0[1] = d1;
+        self.0[2] = d2;
+        self.0[3] = d3;
     }
 
     #[inline(always)]
@@ -517,24 +470,25 @@ impl<const MQ: u64> GF255<MQ> {
     #[inline]
     pub fn set_mul32(&mut self) {
         // 1. Extract top bits.
-        let tt = self.0[7] >> 26;
+        let tt = self.0[3] >> 58;
 
         // 2. Left-shift (also clearing the extracted bits).
-        self.0[7] = ((self.0[7] << 5) & 0x7FFFFFFF) | (self.0[6] >> 27);
-        for i in (1..7).rev() {
-            self.0[i] = (self.0[i] << 5) | (self.0[i - 1] >> 27);
-        }
-        self.0[0] = self.0[0] << 5;
+        let d0 = self.0[0] << 5;
+        let d1 = (self.0[0] >> 59) | (self.0[1] << 5);
+        let d2 = (self.0[1] >> 59) | (self.0[2] << 5);
+        let d3 = (self.0[2] >> 59) | ((self.0[3] << 5) & 0x7FFFFFFFFFFFFFFF);
 
         // 3. Add back the top bits with reduction. Since we extracted
         // one more bit than needed, this cannot overflow.
-        let (d, mut cc) = addcarry_u32(self.0[0], tt * (MQ as u32), 0);
-        self.0[0] = d;
-        for i in 1..8 {
-            let (d, ee) = addcarry_u32(self.0[i], 0, cc);
-            self.0[i] = d;
-            cc = ee;
-        }
+        let (d0, cc) = addcarry_u64(d0, tt * MQ, 0);
+        let (d1, cc) = addcarry_u64(d1, 0, cc);
+        let (d2, cc) = addcarry_u64(d2, 0, cc);
+        let (d3, _)  = addcarry_u64(d3, 0, cc);
+
+        self.0[0] = d0;
+        self.0[1] = d1;
+        self.0[2] = d2;
+        self.0[3] = d3;
     }
 
     #[inline(always)]
@@ -544,41 +498,38 @@ impl<const MQ: u64> GF255<MQ> {
         r
     }
 
-    // Multiplies this value by a small integer (in place).
+    // Multiply this value by a small integer.
     #[inline]
     pub fn set_mul_small(&mut self, x: u32) {
-        // Compute the product as an integer over nine words.
-        // Max value is (2^32 - 1)*(2^256 - 1), so the top word (cc) is
-        // at most 2^32 - 2.
-        let (lo, mut cc) = umull(self.0[0], x);
-        self.0[0] = lo;
-        for i in 1..8 {
-            let (lo, hi) = umull_add(self.0[i], x, cc);
-            self.0[i] = lo;
-            cc = hi;
-        }
+        let b = x as u64;
 
-        // Do the reduction by folding the top word (cc) _and_ the top
-        // bit of the previous word (self.0[7]). Since that clears the top
-        // bit, only one pass is needed (folding won't overflow).
-        // We want to compute:
-        //   (2*cc + (self.0[7] >> 31)) * MQ
-        // Since 2*cc might not fit in 32 bits, we expand this into:
-        //   cc * (2*MQ) + (self.0[7] >> 31) * MQ
-        // The second multiplication can be done with a bitwise AND.
-        let (c0, c1) = umull_add(cc, 2 * (MQ as u32),
-            sgnw(self.0[7]) & (MQ as u32));
-        let (d, cc) = addcarry_u32(self.0[0], c0, 0);
-        self.0[0] = d;
-        let (d, mut cc) = addcarry_u32(self.0[1], c1, cc);
-        self.0[1] = d;
-        for i in 2..7 {
-            let (d, ee) = addcarry_u32(self.0[i], 0, cc);
-            self.0[i] = d;
-            cc = ee;
-        }
-        let (d, _) = addcarry_u32(self.0[7] & 0x7FFFFFFF, 0, cc);
-        self.0[7] = d;
+        // Compute the product as an integer over five words.
+        // Max value is (2^32 - 1)*(2^256 - 1), so the top word (d4) is
+        // at most 2^32 - 2.
+        let (d0, d1) = umull(self.0[0], b);
+        let (d2, d3) = umull(self.0[2], b);
+        let (lo, hi) = umull(self.0[1], b);
+        let (d1, cc) = addcarry_u64(d1, lo, 0);
+        let (d2, cc) = addcarry_u64(d2, hi, cc);
+        let (lo, d4) = umull(self.0[3], b);
+        let (d3, cc) = addcarry_u64(d3, lo, cc);
+        let (d4, _)  = addcarry_u64(d4, 0, cc);
+
+        // Do the reduction by folding the top word (d4) _and_ the top bit
+        // of the previous word (d3). Since that frees up the top bit, only
+        // one pass is needed.
+        // Maximum fold value is (2^33 - 3)*MQ, which fits on 64 bits as
+        // long as MQ <= 2^31.
+        let d4 = ((d4 << 1) | (d3 >> 63)) * MQ;
+        let (d0, cc) = addcarry_u64(d0, d4, 0);
+        let (d1, cc) = addcarry_u64(d1, 0, cc);
+        let (d2, cc) = addcarry_u64(d2, 0, cc);
+        let (d3, _)  = addcarry_u64(d3 & 0x7FFFFFFFFFFFFFFF, 0, cc);
+
+        self.0[0] = d0;
+        self.0[1] = d1;
+        self.0[2] = d2;
+        self.0[3] = d3;
     }
 
     #[inline(always)]
@@ -590,115 +541,171 @@ impl<const MQ: u64> GF255<MQ> {
 
     #[inline(always)]
     fn set_mul(&mut self, rhs: &Self) {
-        // 1. Product -> 512 bits.
-        let mut c = [0u32; 16];
-        let (lo, mut hi) = umull(self.0[0], rhs.0[0]);
-        c[0] = lo;
-        for i in 1..8 {
-            let (lo, ee) = umull_add(self.0[0], rhs.0[i], hi);
-            c[i] = lo;
-            hi = ee;
-        }
-        c[8] = hi;
-        for j in 1..8 {
-            let (lo, mut hi) = umull_add(self.0[j], rhs.0[0], c[j]);
-            c[j] = lo;
-            for i in 1..8 {
-                let (lo, ee) = umull_add2(self.0[j], rhs.0[i], c[i + j], hi);
-                c[i + j] = lo;
-                hi = ee;
-            }
-            c[j + 8] = hi;
-        }
+        let (a0, a1, a2, a3) = (self.0[0], self.0[1], self.0[2], self.0[3]);
+        let (b0, b1, b2, b3) = (rhs.0[0], rhs.0[1], rhs.0[2], rhs.0[3]);
+
+        // 1. Product -> 512 bits
+        let (e0, e1) = umull(a0, b0);
+        let (e2, e3) = umull(a1, b1);
+        let (e4, e5) = umull(a2, b2);
+        let (e6, e7) = umull(a3, b3);
+
+        let (lo, hi) = umull(a0, b1);
+        let (e1, cc) = addcarry_u64(e1, lo, 0);
+        let (e2, cc) = addcarry_u64(e2, hi, cc);
+        let (lo, hi) = umull(a0, b3);
+        let (e3, cc) = addcarry_u64(e3, lo, cc);
+        let (e4, cc) = addcarry_u64(e4, hi, cc);
+        let (lo, hi) = umull(a2, b3);
+        let (e5, cc) = addcarry_u64(e5, lo, cc);
+        let (e6, cc) = addcarry_u64(e6, hi, cc);
+        let (e7, _)  = addcarry_u64(e7, 0, cc);
+
+        let (lo, hi) = umull(a1, b0);
+        let (e1, cc) = addcarry_u64(e1, lo, 0);
+        let (e2, cc) = addcarry_u64(e2, hi, cc);
+        let (lo, hi) = umull(a3, b0);
+        let (e3, cc) = addcarry_u64(e3, lo, cc);
+        let (e4, cc) = addcarry_u64(e4, hi, cc);
+        let (lo, hi) = umull(a3, b2);
+        let (e5, cc) = addcarry_u64(e5, lo, cc);
+        let (e6, cc) = addcarry_u64(e6, hi, cc);
+        let (e7, _)  = addcarry_u64(e7, 0, cc);
+
+        let (lo, hi) = umull(a0, b2);
+        let (e2, cc) = addcarry_u64(e2, lo, 0);
+        let (e3, cc) = addcarry_u64(e3, hi, cc);
+        let (lo, hi) = umull(a1, b3);
+        let (e4, cc) = addcarry_u64(e4, lo, cc);
+        let (e5, cc) = addcarry_u64(e5, hi, cc);
+        let (e6, cc) = addcarry_u64(e6, 0, cc);
+        let (e7, _)  = addcarry_u64(e7, 0, cc);
+
+        let (lo, hi) = umull(a2, b0);
+        let (e2, cc) = addcarry_u64(e2, lo, 0);
+        let (e3, cc) = addcarry_u64(e3, hi, cc);
+        let (lo, hi) = umull(a3, b1);
+        let (e4, cc) = addcarry_u64(e4, lo, cc);
+        let (e5, cc) = addcarry_u64(e5, hi, cc);
+        let (e6, cc) = addcarry_u64(e6, 0, cc);
+        let (e7, _)  = addcarry_u64(e7, 0, cc);
+
+        let (lo, hi) = umull(a1, b2);
+        let (lo2, hi2) = umull(a2, b1);
+        let (lo, cc) = addcarry_u64(lo, lo2, 0);
+        let (hi, tt) = addcarry_u64(hi, hi2, cc);
+        let (e3, cc) = addcarry_u64(e3, lo, 0);
+        let (e4, cc) = addcarry_u64(e4, hi, cc);
+        let (e5, cc) = addcarry_u64(e5, tt as u64, cc);
+        let (e6, cc) = addcarry_u64(e6, 0, cc);
+        let (e7, _)  = addcarry_u64(e7, 0, cc);
 
         // 2. Reduction
         // We fold the upper words in two steps; first step adds the
         // low words of the multiplication by 2*MQ, while high words
-        // of these products are kept in c[8]..c[15]
-        for i in 0..8 {
-            let (lo, hi) = umull_add(c[i + 8], 2 * (MQ as u32), c[i]);
-            c[i] = lo;
-            c[i + 8] = hi;
-        }
+        // of these products are kept in h0..h3.
+        let (lo, h0) = umull(e4, 2 * MQ);
+        let (e0, cc) = addcarry_u64(e0, lo, 0);
+        let (lo, h1) = umull(e5, 2 * MQ);
+        let (e1, cc) = addcarry_u64(e1, lo, cc);
+        let (lo, h2) = umull(e6, 2 * MQ);
+        let (e2, cc) = addcarry_u64(e2, lo, cc);
+        let (lo, h3) = umull(e7, 2 * MQ);
+        let (e3, cc) = addcarry_u64(e3, lo, cc);
+        let (h3, _)  = addcarry_u64(h3, 0, cc);
 
-        // Max value for c[15] is 1 + floor(2*MQ*(2^32 - 1) / 2^32).
-        // We then compute (2*c[15] + b)*MQ, with b being the top bit of c[7]
-        // (i.e. b = 0 or 1). This value fits on 32 bits as long as
-        // MQ <= 2^15 - 1 (hence the restriction on the MQ parameter).
-        let g = (c[15] << 1) | (c[7] >> 31);
-        c[7] &= 0x7FFFFFFF;
-        let (d, mut cc) = addcarry_u32(c[0], g * (MQ as u32), 0);
-        self.0[0] = d;
-        for i in 1..8 {
-            let (d, ee) = addcarry_u32(c[i], c[i + 7], cc);
-            self.0[i] = d;
-            cc = ee;
-        }
+        // Max value for h3 is 1 + floor(2*MQ*(2^64 - 1) / 2^64).
+        // We then compute (2*h3 + b)*MQ, with b being the top bit of e3
+        // (i.e. b = 0 or 1). This value fits on 64 bits as long as
+        // MQ <= 2^31 - 1.
+
+        let h3 = (h3 << 1) | (e3 >> 63);
+        let e3 = e3 & 0x7FFFFFFFFFFFFFFF;
+        let (e0, cc) = addcarry_u64(e0, h3 * MQ, 0);
+        let (e1, cc) = addcarry_u64(e1, h0, cc);
+        let (e2, cc) = addcarry_u64(e2, h1, cc);
+        let (e3, _)  = addcarry_u64(e3, h2, cc);
+
+        self.0[0] = e0;
+        self.0[1] = e1;
+        self.0[2] = e2;
+        self.0[3] = e3;
     }
 
     // Square this value (in place).
     #[inline(always)]
     pub fn set_square(&mut self) {
-        // 1. Square over integers -> 512 bits.
-        // We first compute the non-square products.
-        let mut c = [0u32; 16];
-        let (lo, mut hi) = umull(self.0[0], self.0[1]);
-        c[1] = lo;
-        for i in 2..8 {
-            let (lo, ee) = umull_add(self.0[0], self.0[i], hi);
-            c[i] = lo;
-            hi = ee;
-        }
-        c[8] = hi;
-        for j in 1..7 {
-            let (lo, mut hi) = umull_add(
-                self.0[j], self.0[j + 1], c[2 * j + 1]);
-            c[2 * j + 1] = lo;
-            for i in (j + 2)..8 {
-                let (lo, ee) = umull_add2(self.0[j], self.0[i], c[i + j], hi);
-                c[i + j] = lo;
-                hi = ee;
-            }
-            c[j + 8] = hi;
-        }
+        let (a0, a1, a2, a3) = (self.0[0], self.0[1], self.0[2], self.0[3]);
 
-        // 2. Double all non-square products.
-        c[15] = c[14] >> 31;
-        for i in (2..15).rev() {
-            c[i] = (c[i] << 1) | (c[i - 1] >> 31);
-        }
-        c[1] = c[1] << 1;
+        // 1. Non-square products. Max intermediate value:
+        //   a0*a1            * 2^64
+        //   a0*a2            * 2^128
+        //   (a0*a3 + a1*a2)  * 2^192
+        //   a1*a3            * 2^256
+        //   a2*a3            * 2^320
+        // for a total which is stlightly below 2^448, which means that
+        // the value fits on e1..e6 (no possible carry into e7).
+        let (e1, e2) = umull(a0, a1);
+        let (e3, e4) = umull(a0, a3);
+        let (e5, e6) = umull(a2, a3);
+        let (lo, hi) = umull(a0, a2);
+        let (e2, cc) = addcarry_u64(e2, lo, 0);
+        let (e3, cc) = addcarry_u64(e3, hi, cc);
+        let (lo, hi) = umull(a1, a3);
+        let (e4, cc) = addcarry_u64(e4, lo, cc);
+        let (e5, cc) = addcarry_u64(e5, hi, cc);
+        let (e6, _)  = addcarry_u64(e6, 0, cc);
+        let (lo, hi) = umull(a1, a2);
+        let (e3, cc) = addcarry_u64(e3, lo, 0);
+        let (e4, cc) = addcarry_u64(e4, hi, cc);
+        let (e5, cc) = addcarry_u64(e5, 0, cc);
+        let (e6, _)  = addcarry_u64(e6, 0, cc);
 
-        // 3. Add all squares.
-        let (lo, hi) = umull(self.0[0], self.0[0]);
-        c[0] = lo;
-        let (d, mut cc) = addcarry_u32(c[1], hi, 0);
-        c[1] = d;
-        for i in 1..8 {
-            let (lo, hi) = umull(self.0[i], self.0[i]);
-            let (d, ee) = addcarry_u32(c[2 * i], lo, cc);
-            c[2 * i] = d;
-            let (d, ee) = addcarry_u32(c[2 * i + 1], hi, ee);
-            c[2 * i + 1] = d;
-            cc = ee;
-        }
+        // 2. Double the intermediate value, then add the squares.
+        let e7 = e6 >> 63;
+        let e6 = (e6 << 1) | (e5 >> 63);
+        let e5 = (e5 << 1) | (e4 >> 63);
+        let e4 = (e4 << 1) | (e3 >> 63);
+        let e3 = (e3 << 1) | (e2 >> 63);
+        let e2 = (e2 << 1) | (e1 >> 63);
+        let e1 = e1 << 1;
 
-        // 4. Reduction
-        // This is identical to the reduction in set_mul().
-        for i in 0..8 {
-            let (lo, hi) = umull_add(c[i + 8], 2 * (MQ as u32), c[i]);
-            c[i] = lo;
-            c[i + 8] = hi;
-        }
-        let g = (c[15] << 1) | (c[7] >> 31);
-        c[7] &= 0x7FFFFFFF;
-        let (d, mut cc) = addcarry_u32(c[0], g * (MQ as u32), 0);
-        self.0[0] = d;
-        for i in 1..8 {
-            let (d, ee) = addcarry_u32(c[i], c[i + 7], cc);
-            self.0[i] = d;
-            cc = ee;
-        }
+        let (e0, hi) = umull(a0, a0);
+        let (e1, cc) = addcarry_u64(e1, hi, 0);
+        let (lo, hi) = umull(a1, a1);
+        let (e2, cc) = addcarry_u64(e2, lo, cc);
+        let (e3, cc) = addcarry_u64(e3, hi, cc);
+        let (lo, hi) = umull(a2, a2);
+        let (e4, cc) = addcarry_u64(e4, lo, cc);
+        let (e5, cc) = addcarry_u64(e5, hi, cc);
+        let (lo, hi) = umull(a3, a3);
+        let (e6, cc) = addcarry_u64(e6, lo, cc);
+        let (e7, _)  = addcarry_u64(e7, hi, cc);
+
+        // 3. Reduction.
+        // See set_mul() for comments on the range; this is the same
+        // reduction.
+        let (lo, h0) = umull(e4, 2 * MQ);
+        let (e0, cc) = addcarry_u64(e0, lo, 0);
+        let (lo, h1) = umull(e5, 2 * MQ);
+        let (e1, cc) = addcarry_u64(e1, lo, cc);
+        let (lo, h2) = umull(e6, 2 * MQ);
+        let (e2, cc) = addcarry_u64(e2, lo, cc);
+        let (lo, h3) = umull(e7, 2 * MQ);
+        let (e3, cc) = addcarry_u64(e3, lo, cc);
+        let (h3, _)  = addcarry_u64(h3, 0, cc);
+
+        let h3 = (h3 << 1) | (e3 >> 63);
+        let e3 = e3 & 0x7FFFFFFFFFFFFFFF;
+        let (e0, cc) = addcarry_u64(e0, h3 * MQ, 0);
+        let (e1, cc) = addcarry_u64(e1, h0, cc);
+        let (e2, cc) = addcarry_u64(e2, h1, cc);
+        let (e3, _)  = addcarry_u64(e3, h2, cc);
+
+        self.0[0] = e0;
+        self.0[1] = e1;
+        self.0[2] = e2;
+        self.0[3] = e3;
     }
 
     // Square this value.
@@ -730,109 +737,92 @@ impl<const MQ: u64> GF255<MQ> {
     #[inline]
     fn set_normalized(&mut self) {
         // Propagate top bit if set.
-        let w = (self.0[7] >> 31).wrapping_neg();
-        let (d, mut cc) = addcarry_u32(self.0[0], w & (MQ as u32), 0);
-        self.0[0] = d;
-        for i in 1..7 {
-            let (d, ee) = addcarry_u32(self.0[i], 0, cc);
-            self.0[i] = d;
-            cc = ee;
-        }
-        let (d, _) = addcarry_u32(self.0[7] & 0x7FFFFFFF, 0, cc);
-        self.0[7] = d;
+        let e = (self.0[3] >> 63).wrapping_neg();
+        let (d0, cc) = addcarry_u64(self.0[0], e & MQ, 0);
+        let (d1, cc) = addcarry_u64(self.0[1], 0, cc);
+        let (d2, cc) = addcarry_u64(self.0[2], 0, cc);
+        let (d3, _)  = addcarry_u64(self.0[3] & 0x7FFFFFFFFFFFFFFF, 0, cc);
 
         // Value is now at most 2^255 + MQ - 1. Subtract q, then add it
         // back in case the result would be negative.
-        let (d, mut cc) = subborrow_u32(self.0[0],
-            (MQ as u32).wrapping_neg(), 0);
-        self.0[0] = d;
-        for i in 1..7 {
-            let (d, ee) = subborrow_u32(self.0[i], 0xFFFFFFFF, cc);
-            self.0[i] = d;
-            cc = ee;
-        }
-        let (d, cc) = subborrow_u32(self.0[7], 0x7FFFFFFF, cc);
-        self.0[7] = d;
+        let (d0, cc) = subborrow_u64(d0, MQ.wrapping_neg(), 0);
+        let (d1, cc) = subborrow_u64(d1, !0u64, cc);
+        let (d2, cc) = subborrow_u64(d2, !0u64, cc);
+        let (d3, cc) = subborrow_u64(d3, (!0u64) >> 1, cc);
 
-        let w = (cc as u32).wrapping_neg();
-        let (d, mut cc) = addcarry_u32(self.0[0],
-            w & (MQ as u32).wrapping_neg(), 0);
-        self.0[0] = d;
-        for i in 1..7 {
-            let (d, ee) = addcarry_u32(self.0[i], w, cc);
-            self.0[i] = d;
-            cc = ee;
-        }
-        let (d, _) = addcarry_u32(self.0[7], w >> 1, cc);
-        self.0[7] = d;
+        let e = (cc as u64).wrapping_neg();
+        let (d0, cc) = addcarry_u64(d0, e & MQ.wrapping_neg(), 0);
+        let (d1, cc) = addcarry_u64(d1, e, cc);
+        let (d2, cc) = addcarry_u64(d2, e, cc);
+        let (d3, _)  = addcarry_u64(d3, e >> 1, cc);
+
+        self.0[0] = d0;
+        self.0[1] = d1;
+        self.0[2] = d2;
+        self.0[3] = d3;
     }
 
     // Set this value to u*f+v*g (with 'u' being self). Parameters f and g
-    // are provided as u32, but they are signed integers in the -2^30..+2^30
+    // are provided as u64, but they are signed integers in the -2^62..+2^62
     // range.
     #[inline]
-    fn set_lin(&mut self, u: &Self, v: &Self, f: u32, g: u32) {
+    fn set_lin(&mut self, u: &Self, v: &Self, f: u64, g: u64) {
         // Make sure f is nonnegative, by negating it if necessary, and
         // also negating u in that case to keep u*f unchanged.
         let sf = sgnw(f);
         let f = (f ^ sf).wrapping_sub(sf);
-        let tu = Self::select(u, &-u, sf);
+        let tu = Self::select(u, &-u, sf as u32);
 
         // Same treatment for g and v.
         let sg = sgnw(g);
         let g = (g ^ sg).wrapping_sub(sg);
-        let tv = Self::select(v, &-v, sg);
+        let tv = Self::select(v, &-v, sg as u32);
 
         // Compute the linear combination on plain integers. Since f and
-        // g are at most 2^30 each, intermediate 64-bit products cannot
+        // g are at most 2^62 each, intermediate 128-bit products cannot
         // overflow.
-        let (lo, mut cc) = umull_x2(tu.0[0], f, tv.0[0], g);
-        self.0[0] = lo;
-        for i in 1..8 {
-            let (lo, hi) = umull_x2_add(tu.0[i], f, tv.0[i], g, cc);
-            self.0[i] = lo;
-            cc = hi;
-        }
+        let (d0, t) = umull_x2(tu.0[0], f, tv.0[0], g);
+        let (d1, t) = umull_x2_add(tu.0[1], f, tv.0[1], g, t);
+        let (d2, t) = umull_x2_add(tu.0[2], f, tv.0[2], g, t);
+        let (d3, t) = umull_x2_add(tu.0[3], f, tv.0[3], g, t);
 
-        // Upper word cc can be up to 31 bits.
-        let (lo, hi) = umull(cc, 2 * (MQ as u32));
-        let (d, cc) = addcarry_u32(self.0[0], lo, 0);
-        self.0[0] = d;
-        let (d, mut cc) = addcarry_u32(self.0[1], hi, cc);
-        self.0[1] = d;
-        for i in 2..8 {
-            let (d, ee) = addcarry_u32(self.0[i], 0, cc);
-            self.0[i] = d;
-            cc = ee;
-        }
+        // Upper word t can be up to 63 bits.
+        let (lo, hi) = umull(t, 2 * MQ);
+        let (d0, cc) = addcarry_u64(d0, lo, 0);
+        let (d1, cc) = addcarry_u64(d1, hi, cc);
+        let (d2, cc) = addcarry_u64(d2, 0, cc);
+        let (d3, cc) = addcarry_u64(d3, 0, cc);
 
         // If there is a carry, then current value is lower than
-        // 2 * MQ * 2^31, and the folding cannot propagate beyond the
+        // 2 * MQ * 2^63, and the folding cannot propagate beyond the
         // second limb.
-        let (d, cc) = addcarry_u32(self.0[0],
-            (cc as u32).wrapping_neg() & (2 * (MQ as u32)), 0);
-        self.0[0] = d;
-        let (d, _) = addcarry_u32(self.0[1], 0, cc);
-        self.0[1] = d;
+        let (d0, cc) = addcarry_u64(d0,
+            (cc as u64).wrapping_neg() & (2 * MQ), 0);
+        let (d1, _)  = addcarry_u64(d1, 0, cc);
+
+        self.0[0] = d0;
+        self.0[1] = d1;
+        self.0[2] = d2;
+        self.0[3] = d3;
     }
 
     #[inline(always)]
-    fn lin(a: &Self, b: &Self, f: u32, g: u32) -> Self {
+    fn lin(a: &Self, b: &Self, f: u64, g: u64) -> Self {
         let mut r = Self::ZERO;
         r.set_lin(a, b, f, g);
         r
     }
 
-    // Set this value to abs((a*f+b*g)/2^15). Values a and b are interpreted
-    // as signed 256-bit integers. Coefficients f and g are provided as u32,
-    // but they really are signed integers in the -2^15..+2^15 range
-    // (inclusive). The low 15 bits are dropped (i.e. the division is assumed
+    // Set this value to abs((a*f+b*g)/2^31). Values a and b are interpreted
+    // as signed 256-bit integers. Coefficients f and g are provided as u64,
+    // but they really are signed integers in the -2^31..+2^31 range
+    // (inclusive). The low 31 bits are dropped (i.e. the division is assumed
     // to be exact). The result is assumed to fit in 256 bits (including the
     // sign bit) (otherwise, truncation occurs).
     //
-    // Returned value is -1 (u32) if (a*f+b*g) was negative, 0 otherwise.
+    // Returned value is -1 (u64) if (a*f+b*g) was negative, 0 otherwise.
     #[inline]
-    fn set_lindiv15abs(&mut self, a: &Self, b: &Self, f: u32, g: u32) -> u32 {
+    fn set_lindiv31abs(&mut self, a: &Self, b: &Self, f: u64, g: u64) -> u64 {
         // Replace f and g with abs(f) and abs(g), but remember the
         // original signs.
         let sf = sgnw(f);
@@ -841,63 +831,53 @@ impl<const MQ: u64> GF255<MQ> {
         let g = (g ^ sg).wrapping_sub(sg);
 
         // Apply the signs of f and g to the source operands.
-        let mut aa = [0u32; 8];
-        let (d, mut cc) = subborrow_u32(a.0[0] ^ sf, sf, 0);
-        aa[0] = d;
-        for i in 1..8 {
-            let (d, ee) = subborrow_u32(a.0[i] ^ sf, sf, cc);
-            aa[i] = d;
-            cc = ee;
-        }
-        let mut bb = [0u32; 8];
-        let (d, mut cc) = subborrow_u32(b.0[0] ^ sg, sg, 0);
-        bb[0] = d;
-        for i in 1..8 {
-            let (d, ee) = subborrow_u32(b.0[i] ^ sg, sg, cc);
-            bb[i] = d;
-            cc = ee;
-        }
+        let (a0, cc) = subborrow_u64(a.0[0] ^ sf, sf, 0);
+        let (a1, cc) = subborrow_u64(a.0[1] ^ sf, sf, cc);
+        let (a2, cc) = subborrow_u64(a.0[2] ^ sf, sf, cc);
+        let (a3, _)  = subborrow_u64(a.0[3] ^ sf, sf, cc);
+        let (b0, cc) = subborrow_u64(b.0[0] ^ sg, sg, 0);
+        let (b1, cc) = subborrow_u64(b.0[1] ^ sg, sg, cc);
+        let (b2, cc) = subborrow_u64(b.0[2] ^ sg, sg, cc);
+        let (b3, _)  = subborrow_u64(b.0[3] ^ sg, sg, cc);
 
-        // Compute a*f+b*g into self (high word in t). Since f and g are at
-        // most 2^31, we can add two 64-bit products with no overflow.
-        let (lo, mut t) = umull_x2(aa[0], f, bb[0], g);
-        self.0[0] = lo;
-        for i in 1..8 {
-            let (lo, hi) = umull_x2_add(aa[i], f, bb[i], g, t);
-            self.0[i] = lo;
-            t = hi;
-        }
+        // Compute a*f+b*g into d0:d1:d2:d3:t. Since f and g are at
+        // most 2^31, we can add two 128-bit products with no overflow.
+        let (d0, t) = umull_x2(a0, f, b0, g);
+        let (d1, t) = umull_x2_add(a1, f, b1, g, t);
+        let (d2, t) = umull_x2_add(a2, f, b2, g, t);
+        let (d3, t) = umull_x2_add(a3, f, b3, g, t);
 
         // If a < 0, then the result is overestimated by f*2^256;
         // similarly, if b < 0 then the result is overestimated by g*2^256.
         // We must thus subtract 2^256*(sa*f+sb*g), with sa and sb being
         // the signs of a and b, respectively (1 for negative, 0 otherwise).
-        let t = t.wrapping_sub(f & sgnw(aa[7]));
-        let t = t.wrapping_sub(g & sgnw(bb[7]));
+        let t = t.wrapping_sub(f & sgnw(a3));
+        let t = t.wrapping_sub(g & sgnw(b3));
 
-        // Shift-right the value by 15 bits.
-        for i in 0..7 {
-            self.0[i] = (self.0[i] >> 15) | (self.0[i + 1] << 17);
-        }
-        self.0[7] = (self.0[7] >> 15) | (t << 17);
+        // Shift-right the value by 31 bits.
+        let d0 = (d0 >> 31) | (d1 << 33);
+        let d1 = (d1 >> 31) | (d2 << 33);
+        let d2 = (d2 >> 31) | (d3 << 33);
+        let d3 = (d3 >> 31) | (t << 33);
 
         // If the result is negative, then negate it.
-        let t = sgnw(t);
-        let (d, mut cc) = subborrow_u32(self.0[0] ^ t, t, 0);
-        self.0[0] = d;
-        for i in 1..8 {
-            let (d, ee) = subborrow_u32(self.0[i] ^ t, t, cc);
-            self.0[i] = d;
-            cc = ee;
-        }
+        let t = (t >> 63).wrapping_neg();
+        let (d0, cc) = subborrow_u64(d0 ^ t, t, 0);
+        let (d1, cc) = subborrow_u64(d1 ^ t, t, cc);
+        let (d2, cc) = subborrow_u64(d2 ^ t, t, cc);
+        let (d3, _)  = subborrow_u64(d3 ^ t, t, cc);
 
+        self.0[0] = d0;
+        self.0[1] = d1;
+        self.0[2] = d2;
+        self.0[3] = d3;
         t
     }
 
     #[inline(always)]
-    fn lindiv15abs(a: &Self, b: &Self, f: u32, g: u32) -> (Self, u32) {
+    fn lindiv31abs(a: &Self, b: &Self, f: u64, g: u64) -> (Self, u64) {
         let mut r = Self::ZERO;
-        let ng = r.set_lindiv15abs(a, b, f, g);
+        let ng = r.set_lindiv31abs(a, b, f, g);
         (r, ng)
     }
 
@@ -932,68 +912,79 @@ impl<const MQ: u64> GF255<MQ> {
         let mut a = *y;
         a.set_normalized();
         let mut b = Self([
-            (MQ as u32).wrapping_neg(),
-            0xFFFFFFFF,
-            0xFFFFFFFF,
-            0xFFFFFFFF,
-            0xFFFFFFFF,
-            0xFFFFFFFF,
-            0xFFFFFFFF,
-            0x7FFFFFFF,
+            MQ.wrapping_neg(),
+            0xFFFFFFFFFFFFFFFF,
+            0xFFFFFFFFFFFFFFFF,
+            0x7FFFFFFFFFFFFFFF,
         ]);
         let mut u = *self;
         let mut v = Self::ZERO;
 
-        // Generic loop does 32*15 = 480 inner iterations.
-        for _ in 0..32 {
-            // Get approximations of a and b over 32 bits:
-            //  - If len(a) <= 32 and len(b) <= 32, then we just use
+        // Generic loop does 15*31 = 465 inner iterations.
+        for _ in 0..15 {
+            // Get approximations of a and b over 64 bits:
+            //  - If len(a) <= 64 and len(b) <= 64, then we just use
             //    their values (low limbs).
             //  - Otherwise, with n = max(len(a), len(b)), we use:
-            //       (a mod 2^15) + 2^15*floor(a / 2^(n - 17))
-            //       (b mod 2^15) + 2^15*floor(b / 2^(n - 17))
-            let mut c_hi = 0xFFFFFFFFu32;
-            let mut c_lo = 0xFFFFFFFFu32;
-            let mut a_hi = 0u32;
-            let mut a_lo = 0u32;
-            let mut b_hi = 0u32;
-            let mut b_lo = 0u32;
-            for j in (0..8).rev() {
-                let aw = a.0[j];
-                let bw = b.0[j];
-                a_hi ^= (a_hi ^ aw) & c_hi;
-                a_lo ^= (a_lo ^ aw) & c_lo;
-                b_hi ^= (b_hi ^ bw) & c_hi;
-                b_lo ^= (b_lo ^ bw) & c_lo;
-                c_lo = c_hi;
-                let mw = aw | bw;
-                c_hi &= ((mw | mw.wrapping_neg()) >> 31).wrapping_sub(1);
-            }
+            //       (a mod 2^31) + 2^31*floor(a / 2^(n - 33))
+            //       (b mod 2^31) + 2^31*floor(b / 2^(n - 33))
 
-            // If c_lo = 0, then we grabbed two words for a and b.
-            // If c_lo != 0 but c_hi = 0, then we grabbed one word
-            // (in a_hi / b_hi), which means that both values are at
-            // most 32 bits.
-            // It is not possible that c_hi != 0 because b != 0 (i.e.
-            // we must have encountered at least one non-zero word).
-            let s = lzcnt(a_hi | b_hi);
-            let mut xa = (a_hi << s) | ((a_lo >> 1) >> (31 - s));
-            let mut xb = (b_hi << s) | ((b_lo >> 1) >> (31 - s));
-            xa = (xa & 0xFFFF8000) | (a.0[0] & 0x00007FFF);
-            xb = (xb & 0xFFFF8000) | (b.0[0] & 0x00007FFF);
+            let m3 = a.0[3] | b.0[3];
+            let m2 = a.0[2] | b.0[2];
+            let m1 = a.0[1] | b.0[1];
+            let tnz3 = sgnw(m3 | m3.wrapping_neg());
+            let tnz2 = sgnw(m2 | m2.wrapping_neg()) & !tnz3;
+            let tnz1 = sgnw(m1 | m1.wrapping_neg()) & !tnz3 & !tnz2;
+            let tnzm = (m3 & tnz3) | (m2 & tnz2) | (m1 & tnz1);
+            let tnza = (a.0[3] & tnz3) | (a.0[2] & tnz2) | (a.0[1] & tnz1);
+            let tnzb = (b.0[3] & tnz3) | (b.0[2] & tnz2) | (b.0[1] & tnz1);
+            let snza = (a.0[2] & tnz3) | (a.0[1] & tnz2) | (a.0[0] & tnz1);
+            let snzb = (b.0[2] & tnz3) | (b.0[1] & tnz2) | (b.0[0] & tnz1);
 
-            // If c_lo != 0, then the computed values for xa and xb should
-            // be ignored, since both a and b fit in a single word each.
-            xa ^= c_lo & (xa ^ a.0[0]);
-            xb ^= c_lo & (xb ^ b.0[0]);
+            // If both len(a) <= 64 and len(b) <= 64, then:
+            //    tnzm = 0
+            //    tnza = 0, snza = 0, tnzb = 0, snzb = 0
+            // Otherwise:
+            //    tnzm != 0
+            //    tnza contains the top non-zero limb of a
+            //    snza contains the limb right below tnza
+            //    tnzb contains the top non-zero limb of a
+            //    snzb contains the limb right below tnzb
+            //
+            // We count the number of leading zero bits in tnzm:
+            //  - If s <= 31, then the top 31 bits can be extracted from
+            //    tnza and tnzb alone.
+            //  - If 32 <= s <= 63, then we need some bits from snza and
+            //    snzb as well.
+            let s = lzcnt(tnzm);
+            let sm = (31_i32.wrapping_sub(s as i32) >> 31) as u64;
+            let tnza = tnza ^ (sm & (tnza ^ ((tnza << 32) | (snza >> 32))));
+            let tnzb = tnzb ^ (sm & (tnzb ^ ((tnzb << 32) | (snzb >> 32))));
+            let s = s - (32 & (sm as u32));
+            let tnza = tnza << s;
+            let tnzb = tnzb << s;
 
-            // Compute the 15 inner iterations on xa and xb.
-            let mut fg0 = 1u32;
-            let mut fg1 = 1u32 << 16;
-            for _ in 0..15 {
+            // At this point:
+            //  - If len(a) <= 64 and len(b) <= 64, then:
+            //       tnza = 0
+            //       tnzb = 0
+            //       tnz1 = tnz2 = tnz3 = 0
+            //       we want to use the entire low words of a and b
+            //  - Otherwise, we want to use the top 33 bits of tnza and
+            //    tnzb, and the low 31 bits of the low words of a and b.
+            let tzx = !(tnz1 | tnz2 | tnz3);
+            let tnza = tnza | (a.0[0] & tzx);
+            let tnzb = tnzb | (b.0[0] & tzx);
+            let mut xa = (a.0[0] & 0x7FFFFFFF) | (tnza & 0xFFFFFFFF80000000);
+            let mut xb = (b.0[0] & 0x7FFFFFFF) | (tnzb & 0xFFFFFFFF80000000);
+
+            // Compute the 31 inner iterations on xa and xb.
+            let mut fg0 = 1u64;
+            let mut fg1 = 1u64 << 32;
+            for _ in 0..31 {
                 let a_odd = (xa & 1).wrapping_neg();
-                let (_, cc) = subborrow_u32(xa, xb, 0);
-                let swap = a_odd & (cc as u32).wrapping_neg();
+                let (_, cc) = subborrow_u64(xa, xb, 0);
+                let swap = a_odd & (cc as u64).wrapping_neg();
                 let t1 = swap & (xa ^ xb);
                 xa ^= t1;
                 xb ^= t1;
@@ -1005,16 +996,16 @@ impl<const MQ: u64> GF255<MQ> {
                 xa >>= 1;
                 fg1 <<= 1;
             }
-            fg0 = fg0.wrapping_add(0x7FFF7FFF);
-            fg1 = fg1.wrapping_add(0x7FFF7FFF);
-            let f0 = (fg0 & 0xFFFF).wrapping_sub(0x7FFF);
-            let g0 = (fg0 >> 16).wrapping_sub(0x7FFF);
-            let f1 = (fg1 & 0xFFFF).wrapping_sub(0x7FFF);
-            let g1 = (fg1 >> 16).wrapping_sub(0x7FFF);
+            fg0 = fg0.wrapping_add(0x7FFFFFFF7FFFFFFF);
+            fg1 = fg1.wrapping_add(0x7FFFFFFF7FFFFFFF);
+            let f0 = (fg0 & 0xFFFFFFFF).wrapping_sub(0x7FFFFFFF);
+            let g0 = (fg0 >> 32).wrapping_sub(0x7FFFFFFF);
+            let f1 = (fg1 & 0xFFFFFFFF).wrapping_sub(0x7FFFFFFF);
+            let g1 = (fg1 >> 32).wrapping_sub(0x7FFFFFFF);
 
             // Propagate updates to a, b, u and v.
-            let (na, nega) = Self::lindiv15abs(&a, &b, f0, g0);
-            let (nb, negb) = Self::lindiv15abs(&a, &b, f1, g1);
+            let (na, nega) = Self::lindiv31abs(&a, &b, f0, g0);
+            let (nb, negb) = Self::lindiv31abs(&a, &b, f1, g1);
             let f0 = (f0 ^ nega).wrapping_sub(nega);
             let g0 = (g0 ^ nega).wrapping_sub(nega);
             let f1 = (f1 ^ negb).wrapping_sub(negb);
@@ -1028,8 +1019,8 @@ impl<const MQ: u64> GF255<MQ> {
         }
 
         // If y is invertible, then the final GCD is 1, and
-        // len(a) + len(b) <= 30, so we can end the computation with
-        // the low words directly. We only need 28 iterations to reach
+        // len(a) + len(b) <= 45, so we can end the computation with
+        // the low words directly. We only need 43 iterations to reach
         // the point where b = 1.
         //
         // If y is zero, then v is unchanged (hence zero) and none of
@@ -1037,14 +1028,14 @@ impl<const MQ: u64> GF255<MQ> {
         // 0 on output, which is what we want.
         let mut xa = a.0[0];
         let mut xb = b.0[0];
-        let mut f0 = 1u32;
-        let mut g0 = 0u32;
-        let mut f1 = 0u32;
-        let mut g1 = 1u32;
-        for _ in 0..28 {
+        let mut f0 = 1u64;
+        let mut g0 = 0u64;
+        let mut f1 = 0u64;
+        let mut g1 = 1u64;
+        for _ in 0..43 {
             let a_odd = (xa & 1).wrapping_neg();
-            let (_, cc) = subborrow_u32(xa, xb, 0);
-            let swap = a_odd & (cc as u32).wrapping_neg();
+            let (_, cc) = subborrow_u64(xa, xb, 0);
+            let swap = a_odd & (cc as u64).wrapping_neg();
             let t1 = swap & (xa ^ xb);
             xa ^= t1;
             xb ^= t1;
@@ -1065,7 +1056,7 @@ impl<const MQ: u64> GF255<MQ> {
         self.set_lin(&u, &v, f1, g1);
 
         // At this point, we have injected extra factors of 2, one for
-        // each of the 15*32+28 = 508 iterations, so we must divide by
+        // each of the 31*15+43 = 508 iterations, so we must divide by
         // 2^508 (mod q). This is done with a multiplication by the
         // appropriate constant.
         self.set_mul(&Self::INVT508);
@@ -1130,54 +1121,49 @@ impl<const MQ: u64> GF255<MQ> {
         let mut a = self;
         a.set_normalized();
         let mut b = Self([
-            (MQ as u32).wrapping_neg(),
-            0xFFFFFFFF,
-            0xFFFFFFFF,
-            0xFFFFFFFF,
-            0xFFFFFFFF,
-            0xFFFFFFFF,
-            0xFFFFFFFF,
-            0x7FFFFFFF,
+            MQ.wrapping_neg(),
+            0xFFFFFFFFFFFFFFFF,
+            0xFFFFFFFFFFFFFFFF,
+            0x7FFFFFFFFFFFFFFF,
         ]);
-        let mut ls = 0u32;  // running symbol information in the low bit
+        let mut ls = 0u64;  // running symbol information in the low bit
 
         // Outer loop
-        for _ in 0..32 {
+        for _ in 0..15 {
             // Get approximations of a and b over 64 bits.
-            let mut c_hi = 0xFFFFFFFFu32;
-            let mut c_lo = 0xFFFFFFFFu32;
-            let mut a_hi = 0u32;
-            let mut a_lo = 0u32;
-            let mut b_hi = 0u32;
-            let mut b_lo = 0u32;
-            for j in (0..8).rev() {
-                let aw = a.0[j];
-                let bw = b.0[j];
-                a_hi ^= (a_hi ^ aw) & c_hi;
-                a_lo ^= (a_lo ^ aw) & c_lo;
-                b_hi ^= (b_hi ^ bw) & c_hi;
-                b_lo ^= (b_lo ^ bw) & c_lo;
-                c_lo = c_hi;
-                let mw = aw | bw;
-                c_hi &= ((mw | mw.wrapping_neg()) >> 31).wrapping_sub(1);
-            }
+            let m3 = a.0[3] | b.0[3];
+            let m2 = a.0[2] | b.0[2];
+            let m1 = a.0[1] | b.0[1];
+            let tnz3 = sgnw(m3 | m3.wrapping_neg());
+            let tnz2 = sgnw(m2 | m2.wrapping_neg()) & !tnz3;
+            let tnz1 = sgnw(m1 | m1.wrapping_neg()) & !tnz3 & !tnz2;
+            let tnzm = (m3 & tnz3) | (m2 & tnz2) | (m1 & tnz1);
+            let tnza = (a.0[3] & tnz3) | (a.0[2] & tnz2) | (a.0[1] & tnz1);
+            let tnzb = (b.0[3] & tnz3) | (b.0[2] & tnz2) | (b.0[1] & tnz1);
+            let snza = (a.0[2] & tnz3) | (a.0[1] & tnz2) | (a.0[0] & tnz1);
+            let snzb = (b.0[2] & tnz3) | (b.0[1] & tnz2) | (b.0[0] & tnz1);
 
-            let s = lzcnt(a_hi | b_hi);
-            let mut xa = (a_hi << s) | ((a_lo >> 1) >> (31 - s));
-            let mut xb = (b_hi << s) | ((b_lo >> 1) >> (31 - s));
-            xa = (xa & 0xFFFF8000) | (a.0[0] & 0x00007FFF);
-            xb = (xb & 0xFFFF8000) | (b.0[0] & 0x00007FFF);
+            let s = lzcnt(tnzm);
+            let sm = (31_i32.wrapping_sub(s as i32) >> 31) as u64;
+            let tnza = tnza ^ (sm & (tnza ^ ((tnza << 32) | (snza >> 32))));
+            let tnzb = tnzb ^ (sm & (tnzb ^ ((tnzb << 32) | (snzb >> 32))));
+            let s = s - (32 & (sm as u32));
+            let tnza = tnza << s;
+            let tnzb = tnzb << s;
 
-            xa ^= c_lo & (xa ^ a.0[0]);
-            xb ^= c_lo & (xb ^ b.0[0]);
+            let tzx = !(tnz1 | tnz2 | tnz3);
+            let tnza = tnza | (a.0[0] & tzx);
+            let tnzb = tnzb | (b.0[0] & tzx);
+            let mut xa = (a.0[0] & 0x7FFFFFFF) | (tnza & 0xFFFFFFFF80000000);
+            let mut xb = (b.0[0] & 0x7FFFFFFF) | (tnzb & 0xFFFFFFFF80000000);
 
-            // First 13 inner iterations.
-            let mut fg0 = 1u32;
-            let mut fg1 = 1u32 << 16;
-            for _ in 0..13 {
+            // First 29 inner iterations.
+            let mut fg0 = 1u64;
+            let mut fg1 = 1u64 << 32;
+            for _ in 0..29 {
                 let a_odd = (xa & 1).wrapping_neg();
-                let (_, cc) = subborrow_u32(xa, xb, 0);
-                let swap = a_odd & (cc as u32).wrapping_neg();
+                let (_, cc) = subborrow_u64(xa, xb, 0);
+                let swap = a_odd & (cc as u64).wrapping_neg();
                 ls ^= swap & ((xa & xb) >> 1);
                 let t1 = swap & (xa ^ xb);
                 xa ^= t1;
@@ -1194,20 +1180,20 @@ impl<const MQ: u64> GF255<MQ> {
 
             // Compute the updated a and b (low words only) to get enough
             // bits for the next two iterations.
-            let fg0z = fg0.wrapping_add(0x7FFF7FFF);
-            let fg1z = fg1.wrapping_add(0x7FFF7FFF);
-            let f0 = (fg0z & 0xFFFF).wrapping_sub(0x7FFF);
-            let g0 = (fg0z >> 16).wrapping_sub(0x7FFF);
-            let f1 = (fg1z & 0xFFFF).wrapping_sub(0x7FFF);
-            let g1 = (fg1z >> 16).wrapping_sub(0x7FFF);
+            let fg0z = fg0.wrapping_add(0x7FFFFFFF7FFFFFFF);
+            let fg1z = fg1.wrapping_add(0x7FFFFFFF7FFFFFFF);
+            let f0 = (fg0z & 0xFFFFFFFF).wrapping_sub(0x7FFFFFFF);
+            let g0 = (fg0z >> 32).wrapping_sub(0x7FFFFFFF);
+            let f1 = (fg1z & 0xFFFFFFFF).wrapping_sub(0x7FFFFFFF);
+            let g1 = (fg1z >> 32).wrapping_sub(0x7FFFFFFF);
             let mut a0 = a.0[0].wrapping_mul(f0)
-                .wrapping_add(b.0[0].wrapping_mul(g0)) >> 13;
+                .wrapping_add(b.0[0].wrapping_mul(g0)) >> 29;
             let mut b0 = a.0[0].wrapping_mul(f1)
-                .wrapping_add(b.0[0].wrapping_mul(g1)) >> 13;
+                .wrapping_add(b.0[0].wrapping_mul(g1)) >> 29;
             for _ in 0..2 {
                 let a_odd = (xa & 1).wrapping_neg();
-                let (_, cc) = subborrow_u32(xa, xb, 0);
-                let swap = a_odd & (cc as u32).wrapping_neg();
+                let (_, cc) = subborrow_u64(xa, xb, 0);
+                let swap = a_odd & (cc as u64).wrapping_neg();
                 ls ^= swap & ((a0 & b0) >> 1);
                 let t1 = swap & (xa ^ xb);
                 xa ^= t1;
@@ -1228,31 +1214,31 @@ impl<const MQ: u64> GF255<MQ> {
             }
 
             // Propagate updates to a and b.
-            fg0 = fg0.wrapping_add(0x7FFF7FFF);
-            fg1 = fg1.wrapping_add(0x7FFF7FFF);
-            let f0 = (fg0 & 0xFFFF).wrapping_sub(0x7FFF);
-            let g0 = (fg0 >> 16).wrapping_sub(0x7FFF);
-            let f1 = (fg1 & 0xFFFF).wrapping_sub(0x7FFF);
-            let g1 = (fg1 >> 16).wrapping_sub(0x7FFF);
+            fg0 = fg0.wrapping_add(0x7FFFFFFF7FFFFFFF);
+            fg1 = fg1.wrapping_add(0x7FFFFFFF7FFFFFFF);
+            let f0 = (fg0 & 0xFFFFFFFF).wrapping_sub(0x7FFFFFFF);
+            let g0 = (fg0 >> 32).wrapping_sub(0x7FFFFFFF);
+            let f1 = (fg1 & 0xFFFFFFFF).wrapping_sub(0x7FFFFFFF);
+            let g1 = (fg1 >> 32).wrapping_sub(0x7FFFFFFF);
 
-            let (na, nega) = Self::lindiv15abs(&a, &b, f0, g0);
-            let (nb, _)    = Self::lindiv15abs(&a, &b, f1, g1);
+            let (na, nega) = Self::lindiv31abs(&a, &b, f0, g0);
+            let (nb, _)    = Self::lindiv31abs(&a, &b, f1, g1);
             ls ^= nega & (nb.0[0] >> 1);
             a = na;
             b = nb;
         }
 
-        // Final iterations: values are at most 30 bits now. We do not
+        // Final iterations: values are at most 45 bits now. We do not
         // need to keep track of update coefficients. Just like the GCD,
-        // we need only 28 iterations, because after 28 iterations,
+        // we need only 43 iterations, because after 43 iterations,
         // value a is 0 or 1, and b is 1, and no further modification to
         // the Legendre symbol may happen.
         let mut xa = a.0[0];
         let mut xb = b.0[0];
-        for _ in 0..28 {
+        for _ in 0..43 {
             let a_odd = (xa & 1).wrapping_neg();
-            let (_, cc) = subborrow_u32(xa, xb, 0);
-            let swap = a_odd & (cc as u32).wrapping_neg();
+            let (_, cc) = subborrow_u64(xa, xb, 0);
+            let swap = a_odd & (cc as u64).wrapping_neg();
             ls ^= swap & ((xa & xb) >> 1);
             let t1 = swap & (xa ^ xb);
             xa ^= t1;
@@ -1266,8 +1252,8 @@ impl<const MQ: u64> GF255<MQ> {
         // bit of ls contains the QR status (0 = square, 1 = non-square),
         // which we need to convert to the expected value (+1 or -1).
         // If y == 0, then we return 0, per the API.
-        let r = 1u32.wrapping_sub((ls & 1) << 1);
-        (r & !self.iszero()) as i32
+        let r = 1u32.wrapping_sub(((ls as u32) & 1) << 1);
+        (r & !(self.iszero() as u32)) as i32
     }
 
     // Set this value to its square root. Returned value is 0xFFFFFFFF
@@ -1453,23 +1439,19 @@ impl<const MQ: u64> GF255<MQ> {
     pub fn iszero(self) -> u32 {
         // Since values are over 256 bits, there are three possible
         // representations for 0: 0, q amnd 2*q.
-        let mut t0 = self.0[0];
-        let mut t1 = self.0[0].wrapping_add(MQ as u32);
-        let mut t2 = self.0[0].wrapping_add(2 * (MQ as u32));
-        for i in 1..7 {
-            t0 |= self.0[i];
-            t1 |= !self.0[i];
-            t2 |= !self.0[i];
-        }
-        t0 |= self.0[7];
-        t1 |= self.0[7] ^ 0x7FFFFFFF;
-        t2 |= !self.0[7];
+        let a0 = self.0[0];
+        let a1 = self.0[1];
+        let a2 = self.0[2];
+        let a3 = self.0[3];
+        let t0 = a0 | a1 | a2 | a3;
+        let t1 = a0.wrapping_add(MQ) | !a1 | !a2 | (a3 ^ 0x7FFFFFFFFFFFFFFF);
+        let t2 = a0.wrapping_add(2 * MQ) | !a1 | !a2 | !a3;
 
         // Top bit of r is 0 if and only if one of t0, t1 or t2 is zero.
         let r = (t0 | t0.wrapping_neg())
               & (t1 | t1.wrapping_neg())
               & (t2 | t2.wrapping_neg());
-        (r >> 31).wrapping_sub(1)
+        ((r >> 63) as u32).wrapping_sub(1)
     }
 
     /* unused
@@ -1486,10 +1468,10 @@ impl<const MQ: u64> GF255<MQ> {
     #[inline(always)]
     fn set_decode32_reduce(&mut self, buf: &[u8]) {
         debug_assert!(buf.len() == 32);
-        for i in 0..8 {
-            self.0[i] = u32::from_le_bytes(*<&[u8; 4]>::try_from(
-                &buf[(4 * i)..(4 * i + 4)]).unwrap());
-        }
+        self.0[0] = u64::from_le_bytes(*<&[u8; 8]>::try_from(&buf[ 0.. 8]).unwrap());
+        self.0[1] = u64::from_le_bytes(*<&[u8; 8]>::try_from(&buf[ 8..16]).unwrap());
+        self.0[2] = u64::from_le_bytes(*<&[u8; 8]>::try_from(&buf[16..24]).unwrap());
+        self.0[3] = u64::from_le_bytes(*<&[u8; 8]>::try_from(&buf[24..32]).unwrap());
     }
 
     // Encode this value over exactly 32 bytes. Encoding is always canonical
@@ -1500,9 +1482,10 @@ impl<const MQ: u64> GF255<MQ> {
         let mut r = self;
         r.set_normalized();
         let mut d = [0u8; 32];
-        for i in 0..8 {
-            d[(4 * i)..(4 * i + 4)].copy_from_slice(&r.0[i].to_le_bytes());
-        }
+        d[ 0.. 8].copy_from_slice(&r.0[0].to_le_bytes());
+        d[ 8..16].copy_from_slice(&r.0[1].to_le_bytes());
+        d[16..24].copy_from_slice(&r.0[2].to_le_bytes());
+        d[24..32].copy_from_slice(&r.0[3].to_le_bytes());
         d
     }
 
@@ -1531,21 +1514,19 @@ impl<const MQ: u64> GF255<MQ> {
 
         // Try to subtract q from the value; if that does not yield a
         // borrow, then the encoding was not canonical.
-        let (_, mut cc) = subborrow_u32(
-            self.0[0], (MQ as u32).wrapping_neg(), 0);
-        for i in 1..7 {
-            let (_, ee) = subborrow_u32(self.0[i], 0xFFFFFFFF, cc);
-            cc = ee;
-        }
-        let (_, cc) = subborrow_u32(self.0[7], 0x7FFFFFFF, cc);
+        let (_, cc) = subborrow_u64(self.0[0], MQ.wrapping_neg(), 0);
+        let (_, cc) = subborrow_u64(self.0[1], !0u64, cc);
+        let (_, cc) = subborrow_u64(self.0[2], !0u64, cc);
+        let (_, cc) = subborrow_u64(self.0[3], (!0u64) >> 1, cc);
 
         // Clear the value if not canonical.
-        let w = (cc as u32).wrapping_neg();
-        for i in 0..8 {
-            self.0[i] &= w;
-        }
+        let cc = (cc as u64).wrapping_neg();
+        self.0[0] &= cc;
+        self.0[1] &= cc;
+        self.0[2] &= cc;
+        self.0[3] &= cc;
 
-        w
+        cc as u32
     }
 
     // Decode a field element from 32 bytes. On success, this returns
@@ -1565,7 +1546,7 @@ impl<const MQ: u64> GF255<MQ> {
     // canonical (i.e. the unsigned little-endian interpretation of the
     // 32 bytes yields an integer with is not lower than q), then this
     // returns (0, 0).
-    #[inline(always)]
+    #[inline]
     pub fn decode32(buf: &[u8]) -> (Self, u32) {
         Self::decode_ct(buf)
     }
@@ -1577,7 +1558,7 @@ impl<const MQ: u64> GF255<MQ> {
     // decoding succeeded.
     #[inline(always)]
     pub fn decode(buf: &[u8]) -> Option<Self> {
-        let (r, cc) = Self::decode_ct(buf);
+        let (r, cc) = Self::decode32(buf);
         if cc != 0 {
             Some(r)
         } else {
@@ -1606,37 +1587,35 @@ impl<const MQ: u64> GF255<MQ> {
         }
 
         while n > 0 {
-            // Multiply the current value by 2^256 (i.e. 2*MQ, modulo q)
-            // and add the new chunk.
             let k = n - 32;
-            let bw = u32::from_le_bytes(*<&[u8; 4]>::try_from(
-                    &buf[k..(k + 4)]).unwrap());
-            let (lo, mut cc) = umull_add(self.0[0], 2 * (MQ as u32), bw);
-            self.0[0] = lo;
-            for i in 1..8 {
-                let bw = u32::from_le_bytes(*<&[u8; 4]>::try_from(
-                    &buf[(k + 4 * i)..(k + 4 * i + 4)]).unwrap());
-                let (lo, hi) = umull_add2(self.0[i], 2 * (MQ as u32), bw, cc);
-                self.0[i] = lo;
-                cc = hi;
-            }
+            let e0 = u64::from_le_bytes(*<&[u8; 8]>
+                ::try_from(&buf[k     ..k +  8]).unwrap());
+            let e1 = u64::from_le_bytes(*<&[u8; 8]>
+                ::try_from(&buf[k +  8..k + 16]).unwrap());
+            let e2 = u64::from_le_bytes(*<&[u8; 8]>
+                ::try_from(&buf[k + 16..k + 24]).unwrap());
+            let e3 = u64::from_le_bytes(*<&[u8; 8]>
+                ::try_from(&buf[k + 24..k + 32]).unwrap());
+            let (d0, h0) = umull(self.0[0], 2 * MQ);
+            let (d0, cc) = addcarry_u64(d0, e0, 0);
+            let (d1, h1) = umull(self.0[1], 2 * MQ);
+            let (d1, cc) = addcarry_u64(d1, e1, cc);
+            let (d2, h2) = umull(self.0[2], 2 * MQ);
+            let (d2, cc) = addcarry_u64(d2, e2, cc);
+            let (d3, h3) = umull(self.0[3], 2 * MQ);
+            let (d3, cc) = addcarry_u64(d3, e3, cc);
+            let (h3, _)  = addcarry_u64(h3, 0, cc);
 
-            // We have some high bits in cc. Max value:
-            //   floor(((2^256 - 1) * (2*MQ) + (2^256 - 1)) / 2^256)
-            //   = floor((2^256 - 1) * (2*MQ + 1) / 2^256)
-            //   = 2*MQ
-            // We can do the folding with an extra bit from the value,
-            // because (2 * cc + 1) * MQ <= (4*MQ + 1)*MQ < 2^32.
-            let h = ((cc << 1) | self.0[7] >> 31) * (MQ as u32);
-            let (d, mut cc) = addcarry_u32(self.0[0], h, 0);
-            self.0[0] = d;
-            for i in 1..7 {
-                let (d, ee) = addcarry_u32(self.0[i], 0, cc);
-                self.0[i] = d;
-                cc = ee;
-            }
-            let (d, _) = addcarry_u32(self.0[7] & 0x7FFFFFFF, 0, cc);
-            self.0[7] = d;
+            let h3 = (h3 << 1) | (d3 >> 63);
+            let (d0, cc) = addcarry_u64(d0, h3 * MQ, 0);
+            let (d1, cc) = addcarry_u64(d1, h0, cc);
+            let (d2, cc) = addcarry_u64(d2, h1, cc);
+            let (d3, _)  = addcarry_u64(d3 & 0x7FFFFFFFFFFFFFFF, h2, cc);
+
+            self.0[0] = d0;
+            self.0[1] = d1;
+            self.0[2] = d2;
+            self.0[3] = d3;
 
             n = k;
         }
@@ -1662,31 +1641,22 @@ impl<const MQ: u64> GF255<MQ> {
             (z as u64, (z >> 64) as u64)
         }
 
-        const fn mm(x: u64, y: u64) -> (u64, u64) {
-            let z = (x as u128) * (y as u128);
-            (z as u64, (z >> 64) as u64)
-        }
-
         const fn sqr<const MQ: u64>(a: GF255<MQ>) -> GF255<MQ> {
-            // This follows the same steps as the runtime set_square()
-            // in the 64-bit backend.
-            let a0 = (a.0[0] as u64) | ((a.0[1] as u64) << 32);
-            let a1 = (a.0[2] as u64) | ((a.0[3] as u64) << 32);
-            let a2 = (a.0[4] as u64) | ((a.0[5] as u64) << 32);
-            let a3 = (a.0[6] as u64) | ((a.0[7] as u64) << 32);
+            // This follows the same steps as the runtime set_square().
+            let (a0, a1, a2, a3) = (a.0[0], a.0[1], a.0[2], a.0[3]);
 
-            // 1. Non-square products. Max intermediate value:
-            let (e1, e2) = mm(a0, a1);
-            let (e3, e4) = mm(a0, a3);
-            let (e5, e6) = mm(a2, a3);
-            let (lo, hi) = mm(a0, a2);
+            // 1. Non-square products.
+            let (e1, e2) = umull(a0, a1);
+            let (e3, e4) = umull(a0, a3);
+            let (e5, e6) = umull(a2, a3);
+            let (lo, hi) = umull(a0, a2);
             let (e2, cc) = adc(e2, lo, 0);
             let (e3, cc) = adc(e3, hi, cc);
-            let (lo, hi) = mm(a1, a3);
+            let (lo, hi) = umull(a1, a3);
             let (e4, cc) = adc(e4, lo, cc);
             let (e5, cc) = adc(e5, hi, cc);
             let (e6, _)  = adc(e6, 0, cc);
-            let (lo, hi) = mm(a1, a2);
+            let (lo, hi) = umull(a1, a2);
             let (e3, cc) = adc(e3, lo, 0);
             let (e4, cc) = adc(e4, hi, cc);
             let (e5, cc) = adc(e5, 0, cc);
@@ -1701,26 +1671,26 @@ impl<const MQ: u64> GF255<MQ> {
             let e2 = (e2 << 1) | (e1 >> 63);
             let e1 = e1 << 1;
 
-            let (e0, hi) = mm(a0, a0);
+            let (e0, hi) = umull(a0, a0);
             let (e1, cc) = adc(e1, hi, 0);
-            let (lo, hi) = mm(a1, a1);
+            let (lo, hi) = umull(a1, a1);
             let (e2, cc) = adc(e2, lo, cc);
             let (e3, cc) = adc(e3, hi, cc);
-            let (lo, hi) = mm(a2, a2);
+            let (lo, hi) = umull(a2, a2);
             let (e4, cc) = adc(e4, lo, cc);
             let (e5, cc) = adc(e5, hi, cc);
-            let (lo, hi) = mm(a3, a3);
+            let (lo, hi) = umull(a3, a3);
             let (e6, cc) = adc(e6, lo, cc);
             let (e7, _)  = adc(e7, hi, cc);
 
             // 3. Reduction.
-            let (lo, h0) = mm(e4, 2 * MQ);
+            let (lo, h0) = umull(e4, 2 * MQ);
             let (e0, cc) = adc(e0, lo, 0);
-            let (lo, h1) = mm(e5, 2 * MQ);
+            let (lo, h1) = umull(e5, 2 * MQ);
             let (e1, cc) = adc(e1, lo, cc);
-            let (lo, h2) = mm(e6, 2 * MQ);
+            let (lo, h2) = umull(e6, 2 * MQ);
             let (e2, cc) = adc(e2, lo, cc);
-            let (lo, h3) = mm(e7, 2 * MQ);
+            let (lo, h3) = umull(e7, 2 * MQ);
             let (e3, cc) = adc(e3, lo, cc);
             let (h3, _)  = adc(h3, 0, cc);
 
@@ -1731,24 +1701,15 @@ impl<const MQ: u64> GF255<MQ> {
             let (e2, cc) = adc(e2, h1, cc);
             let (e3, _)  = adc(e3, h2, cc);
 
-            GF255::<MQ>([
-                e0 as u32, (e0 >> 32) as u32,
-                e1 as u32, (e1 >> 32) as u32,
-                e2 as u32, (e2 >> 32) as u32,
-                e3 as u32, (e3 >> 32) as u32,
-            ])
+            GF255::<MQ>([ e0, e1, e2, e3 ])
         }
 
         // 1/2 = (q + 1)/2 mod q
         let a = Self([
-            (((MQ as u32) - 1) >> 1).wrapping_neg(),
-            0xFFFFFFFF,
-            0xFFFFFFFF,
-            0xFFFFFFFF,
-            0xFFFFFFFF,
-            0xFFFFFFFF,
-            0xFFFFFFFF,
-            0x3FFFFFFF,
+            ((MQ - 1) >> 1).wrapping_neg(),
+            0xFFFFFFFFFFFFFFFF,
+            0xFFFFFFFFFFFFFFFF,
+            0x3FFFFFFFFFFFFFFF,
         ]);
 
         // square 9 times to get 1/2^512 mod q
@@ -1763,10 +1724,7 @@ impl<const MQ: u64> GF255<MQ> {
         let a = sqr::<MQ>(a);
 
         // multiply by 16 to get the result (see set_mul16()).
-        let a0 = (a.0[0] as u64) | ((a.0[1] as u64) << 32);
-        let a1 = (a.0[2] as u64) | ((a.0[3] as u64) << 32);
-        let a2 = (a.0[4] as u64) | ((a.0[5] as u64) << 32);
-        let a3 = (a.0[6] as u64) | ((a.0[7] as u64) << 32);
+        let (a0, a1, a2, a3) = (a.0[0], a.0[1], a.0[2], a.0[3]);
         let tt = a3 >> 59;
         let d0 = a0 << 4;
         let d1 = (a0 >> 60) | (a1 << 4);
@@ -1777,12 +1735,7 @@ impl<const MQ: u64> GF255<MQ> {
         let (d2, cc) = adc(d2, 0, cc);
         let (d3, _)  = adc(d3, 0, cc);
 
-        Self([
-            d0 as u32, (d0 >> 32) as u32,
-            d1 as u32, (d1 >> 32) as u32,
-            d2 as u32, (d2 >> 32) as u32,
-            d3 as u32, (d3 >> 32) as u32,
-        ])
+        Self([ d0, d1, d2, d3 ])
     }
 }
 
@@ -2055,9 +2008,8 @@ mod tests {
 
     /* unused
     fn print<const MQ: u64>(name: &str, v: GF255<MQ>) {
-        println!("{} = 0x{:08X}{:08X}{:08X}{:08X}{:08X}{:08X}{:08X}{:08X}",
-            name, v.0[7], v.0[6], v.0[5], v.0[4],
-            v.0[3], v.0[2], v.0[1], v.0[0]);
+        println!("{} = 0x{:016X}{:016X}{:016X}{:016X}",
+            name, v.0[3], v.0[2], v.0[1], v.0[0]);
     }
     */
 
@@ -2071,9 +2023,9 @@ mod tests {
         let zp4 = &zp << 2;
 
         let mut a = GF255::<MQ>::ZERO;
-        a.set_decode_reduce(va);
+        a.set_decode32_reduce(va);
         let mut b = GF255::<MQ>::ZERO;
-        b.set_decode_reduce(vb);
+        b.set_decode32_reduce(vb);
         let za = BigInt::from_bytes_le(Sign::Plus, va);
         let zb = BigInt::from_bytes_le(Sign::Plus, vb);
 
@@ -2142,7 +2094,7 @@ mod tests {
         let zd = (&za << 5) % &zp;
         assert!(zc == zd);
 
-        let x = b.0[1];
+        let x = b.0[1] as u32;
         let c = a.mul_small(x);
         let vc = c.encode32();
         let zc = BigInt::from_bytes_le(Sign::Plus, &vc);

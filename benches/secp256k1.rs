@@ -1,4 +1,5 @@
 #![allow(non_snake_case)]
+#![cfg(feature = "secp256k1")]
 
 mod util;
 use util::core_cycles;

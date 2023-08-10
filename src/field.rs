@@ -4,28 +4,23 @@
 //! by various curves. These are merely specializations of the
 //! backend-provided `GF255` and `ModInt256` types.
 
-pub use crate::backend::{GF255, ModInt256, GFsecp256k1, GF448};
+#[cfg(feature = "gf255e")]
+pub use crate::backend::GF255e;
 
-/// Field: integers modulo 2^255 - 19
-/// (base field for Curve25519 and derivatives: X25519, ed25519, ristretto255).
-pub type GF25519 = GF255<19>;
+#[cfg(feature = "gf255s")]
+pub use crate::backend::GF255s;
 
-/// Field: integers modulo 2^255 - 18651
-/// (base field for double-odd curve do255e).
-pub type GF255e = GF255<18651>;
+#[cfg(feature = "gf25519")]
+pub use crate::backend::GF25519;
 
-/// Field: integers modulo 2^255 - 3957
-/// (base field for double-odd curve do255s).
-pub type GF255s = GF255<3957>;
+#[cfg(feature = "modint256")]
+pub use crate::backend::ModInt256;
 
-/// Field: integers modulo 2^256 - 2^224 + 2^192 + 2^96 - 1
-/// (base field for NIST curve P-256).
-pub type GFp256 = ModInt256<0xFFFFFFFFFFFFFFFF, 0x00000000FFFFFFFF,
-                            0x0000000000000000, 0xFFFFFFFF00000001>;
+#[cfg(feature = "gfsecp256k1")]
+pub use crate::backend::GFsecp256k1;
 
-impl GFp256 {
-    /// Encodes a field element into bytes (little-endian).
-    pub fn encode(self) -> [u8; 32] {
-        self.encode32()
-    }
-}
+#[cfg(feature = "gfp256")]
+pub use crate::backend::GFp256;
+
+#[cfg(feature = "gf448")]
+pub use crate::backend::GF448;

@@ -1,4 +1,5 @@
 #![allow(non_snake_case)]
+#![cfg(feature = "jq255s")]
 
 mod util;
 use util::core_cycles;

@@ -2,61 +2,57 @@ use core::ops::{Add, AddAssign, Div, DivAssign, Mul, MulAssign, Neg, Sub, SubAss
 use core::convert::TryFrom;
 
 use super::{addcarry_u64, subborrow_u64, umull, umull_x2, umull_x2_add, sgnw, lzcnt};
-use super::lagrange::lagrange253_vartime;
 
 #[derive(Clone, Copy, Debug)]
-pub struct GF255<const MQ: u64>([u64; 4]);
+pub struct GFp256([u64; 4]);
 
-impl<const MQ: u64> GF255<MQ> {
-
-    // Parameter restrictions:
-    //   MQ is odd
-    //   MQ <= 32767
-    //   q = 2^255 - MQ is prime
-    // Moreover, if MQ == 7 mod 8 (i.e. q = 1 mod 8), then square root
-    // computations are not implemented.
-    //
-    // Primality cannot easily be tested at compile-time, but we check
-    // the other properties.
-    //
-    // Tighest restriction on MQ is from set_sqrt(), which assumes that
-    // only the lowest 15 bits of q may be non-zero. Other arithmetic
-    // functions have looser requirements (set_mul() and set_square() need
-    // MQ <= 2^31 - 1).
-    #[allow(dead_code)]
-    const COMPILE_TIME_CHECKS: () = Self::compile_time_checks();
-    const fn compile_time_checks() {
-        static_assert!((MQ & 1) != 0);
-        static_assert!(MQ <= 32767);
-    }
+impl GFp256 {
 
     // Element encoding length (in bytes); always 32 bytes.
     pub const ENC_LEN: usize = 32;
 
-    // Modulus is q = 2^255 - T255_MINUS_Q.
-    // (this is the type parameter MQ, as a 32-bit integer)
-    pub const T255_MINUS_Q: u32 = MQ as u32;
-
     // Modulus q in base 2^64 (low-to-high order).
     pub const MODULUS: [u64; 4] = [
-        MQ.wrapping_neg(),
         0xFFFFFFFFFFFFFFFF,
-        0xFFFFFFFFFFFFFFFF,
-        0x7FFFFFFFFFFFFFFF
+        0x00000000FFFFFFFF,
+        0x0000000000000000,
+        0xFFFFFFFF00000001,
     ];
 
-    pub const ZERO: GF255<MQ> = GF255::<MQ>([ 0, 0, 0, 0 ]);
-    pub const ONE: GF255<MQ> = GF255::<MQ>([ 1, 0, 0, 0 ]);
-    pub const MINUS_ONE: GF255<MQ> = GF255::<MQ>([
-        (MQ + 1).wrapping_neg(),
-        0xFFFFFFFFFFFFFFFF,
-        0xFFFFFFFFFFFFFFFF,
-        0x7FFFFFFFFFFFFFFF,
+    pub const ZERO: Self = Self([ 0, 0, 0, 0 ]);
+    pub const ONE: Self = Self([ 1, 0, 0, 0 ]);
+    pub const MINUS_ONE: Self = Self([
+        0xFFFFFFFFFFFFFFFE,
+        0x00000000FFFFFFFF,
+        0x0000000000000000,
+        0xFFFFFFFF00000001,
     ]);
 
-    // 1/2^508 in the field, as a constant; this is used when computing
+    // (q+1)/2
+    const HALFMOD: [u64; 4] = [
+        0x0000000000000000,
+        0x0000000080000000,
+        0x8000000000000000,
+        0x7FFFFFFF80000000,
+    ];
+
+    // q*2^34
+    const MODT34: [u64; 5] = [
+        0xFFFFFFFC00000000,
+        0xFFFFFFFFFFFFFFFF,
+        0x0000000000000003,
+        0x0000000400000000,
+        0x00000003FFFFFFFC,
+    ];
+
+    // 1/2^510 in the field, as a constant; this is used when computing
     // divisions in the field. The value is computed at compile-time.
-    const INVT508: GF255<MQ> = GF255::<MQ>::make_invt508();
+    const INVT510: GFp256 = Self([
+        0x00000033FFFFFFDC,
+        0xFFFFFFE00000001C,
+        0xFFFFFFEC0000003F,
+        0x00000017FFFFFFFF,
+    ]);
 
     // Create an element from a 256-bit value (implicitly reduced modulo
     // the field order) provided as four 64-bit limbs (in low-to-high order).
@@ -90,10 +86,10 @@ impl<const MQ: u64> GF255<MQ> {
         // We add q to ensure a nonnegative integer.
         let x0 = (x as i64) as u64;
         let xh = ((x as i64) >> 63) as u64;
-        let (d0, cc) = addcarry_u64(x0, MQ.wrapping_neg(), 0);
-        let (d1, cc) = addcarry_u64(xh, 0xFFFFFFFFFFFFFFFF, cc);
-        let (d2, cc) = addcarry_u64(xh, 0xFFFFFFFFFFFFFFFF, cc);
-        let (d3, _)  = addcarry_u64(xh, 0x7FFFFFFFFFFFFFFF, cc);
+        let (d0, cc) = addcarry_u64(x0, Self::MODULUS[0], 0);
+        let (d1, cc) = addcarry_u64(xh, Self::MODULUS[1], cc);
+        let (d2, cc) = addcarry_u64(xh, Self::MODULUS[2], cc);
+        let (d3, _)  = addcarry_u64(xh, Self::MODULUS[3], cc);
         Self([ d0, d1, d2, d3 ])
     }
 
@@ -111,10 +107,10 @@ impl<const MQ: u64> GF255<MQ> {
         // We add q to ensure a nonnegative integer.
         let x0 = x as u64;
         let xh = (x >> 63) as u64;
-        let (d0, cc) = addcarry_u64(x0, MQ.wrapping_neg(), 0);
-        let (d1, cc) = addcarry_u64(xh, 0xFFFFFFFFFFFFFFFF, cc);
-        let (d2, cc) = addcarry_u64(xh, 0xFFFFFFFFFFFFFFFF, cc);
-        let (d3, _)  = addcarry_u64(xh, 0x7FFFFFFFFFFFFFFF, cc);
+        let (d0, cc) = addcarry_u64(x0, Self::MODULUS[0], 0);
+        let (d1, cc) = addcarry_u64(xh, Self::MODULUS[1], cc);
+        let (d2, cc) = addcarry_u64(xh, Self::MODULUS[2], cc);
+        let (d3, _)  = addcarry_u64(xh, Self::MODULUS[3], cc);
         Self([ d0, d1, d2, d3 ])
     }
 
@@ -133,10 +129,10 @@ impl<const MQ: u64> GF255<MQ> {
         let x0 = x as u64;
         let x1 = (x >> 64) as u64;
         let xh = (x >> 127) as u64;
-        let (d0, cc) = addcarry_u64(x0, MQ.wrapping_neg(), 0);
-        let (d1, cc) = addcarry_u64(x1, 0xFFFFFFFFFFFFFFFF, cc);
-        let (d2, cc) = addcarry_u64(xh, 0xFFFFFFFFFFFFFFFF, cc);
-        let (d3, _)  = addcarry_u64(xh, 0x7FFFFFFFFFFFFFFF, cc);
+        let (d0, cc) = addcarry_u64(x0, Self::MODULUS[0], 0);
+        let (d1, cc) = addcarry_u64(x1, Self::MODULUS[1], cc);
+        let (d2, cc) = addcarry_u64(xh, Self::MODULUS[2], cc);
+        let (d3, _)  = addcarry_u64(xh, Self::MODULUS[3], cc);
         Self([ d0, d1, d2, d3 ])
     }
 
@@ -154,18 +150,20 @@ impl<const MQ: u64> GF255<MQ> {
         let (d2, cc) = addcarry_u64(self.0[2], rhs.0[2], cc);
         let (d3, cc) = addcarry_u64(self.0[3], rhs.0[3], cc);
 
-        // 2. In case of an output carry, subtract 2*q, i.e. add 2*MQ.
-        let (d0, cc) = addcarry_u64(d0,
-            (cc as u64).wrapping_neg() & (2 * MQ), 0);
-        let (d1, cc) = addcarry_u64(d1, 0, cc);
-        let (d2, cc) = addcarry_u64(d2, 0, cc);
-        let (d3, cc) = addcarry_u64(d3, 0, cc);
+        // 2. In case of an output carry, subtract q.
+        let m = (cc as u64).wrapping_neg();
+        let (d0, cc) = subborrow_u64(d0, Self::MODULUS[0] & m, 0);
+        let (d1, cc) = subborrow_u64(d1, Self::MODULUS[1] & m, cc);
+        let (d2, cc) = subborrow_u64(d2, Self::MODULUS[2] & m, cc);
+        let (d3, cc) = subborrow_u64(d3, Self::MODULUS[3] & m, cc);
 
-        // 3. If there is again an extra carry, then we have to subtract 2*q
-        // again. In that case, original sum was at least 2^257 - 2*MQ, and
-        // the low word is now lower than 2*MQ, so adding 2*MQ to it will
-        // not overflow.
-        let d0 = d0.wrapping_add((cc as u64).wrapping_neg() & (2 * MQ));
+        // 3. If there was a carry, but no borrow, then subtracting q
+        // once was not enough, we have to do it again.
+        let m = m & (cc as u64).wrapping_sub(1);
+        let (d0, cc) = subborrow_u64(d0, Self::MODULUS[0] & m, 0);
+        let (d1, cc) = subborrow_u64(d1, Self::MODULUS[1] & m, cc);
+        let (d2, cc) = subborrow_u64(d2, Self::MODULUS[2] & m, cc);
+        let (d3, _)  = subborrow_u64(d3, Self::MODULUS[3] & m, cc);
 
         self.0[0] = d0;
         self.0[1] = d1;
@@ -181,17 +179,20 @@ impl<const MQ: u64> GF255<MQ> {
         let (d2, cc) = subborrow_u64(self.0[2], rhs.0[2], cc);
         let (d3, cc) = subborrow_u64(self.0[3], rhs.0[3], cc);
 
-        // 2. In case of an output borrow, add 2*q, i.e. subtract 2*MQ.
-        let (d0, cc) = subborrow_u64(d0,
-            (cc as u64).wrapping_neg() & (2 * MQ), 0);
-        let (d1, cc) = subborrow_u64(d1, 0, cc);
-        let (d2, cc) = subborrow_u64(d2, 0, cc);
-        let (d3, cc) = subborrow_u64(d3, 0, cc);
+        // 2. In case of an output borrow, add q.
+        let m = (cc as u64).wrapping_neg();
+        let (d0, cc) = addcarry_u64(d0, Self::MODULUS[0] & m, 0);
+        let (d1, cc) = addcarry_u64(d1, Self::MODULUS[1] & m, cc);
+        let (d2, cc) = addcarry_u64(d2, Self::MODULUS[2] & m, cc);
+        let (d3, cc) = addcarry_u64(d3, Self::MODULUS[3] & m, cc);
 
-        // 3. If there is again a borrow, then add 2*q again. In that case,
-        // the low word must be at least 2^64 - 2*MQ, and the extra
-        // subtraction won't trigger a new carry.
-        let d0 = d0.wrapping_sub((cc as u64).wrapping_neg() & (2 * MQ));
+        // 3. If there was a borrow, but no carry was produced to
+        // counteract it, then we must add q again.
+        let m = m & (cc as u64).wrapping_sub(1);
+        let (d0, cc) = addcarry_u64(d0, Self::MODULUS[0] & m, 0);
+        let (d1, cc) = addcarry_u64(d1, Self::MODULUS[1] & m, cc);
+        let (d2, cc) = addcarry_u64(d2, Self::MODULUS[2] & m, cc);
+        let (d3, _)  = addcarry_u64(d3, Self::MODULUS[3] & m, cc);
 
         self.0[0] = d0;
         self.0[1] = d1;
@@ -202,19 +203,21 @@ impl<const MQ: u64> GF255<MQ> {
     // Negate this value (in place).
     #[inline]
     pub fn set_neg(&mut self) {
-        // 1. Compute 2*q - self over 256 bits.
-        let (d0, cc) = subborrow_u64((2 * MQ).wrapping_neg(), self.0[0], 0);
-        let (d1, cc) = subborrow_u64(1u64.wrapping_neg(), self.0[1], cc);
-        let (d2, cc) = subborrow_u64(1u64.wrapping_neg(), self.0[2], cc);
-        let (d3, cc) = subborrow_u64(1u64.wrapping_neg(), self.0[3], cc);
+        // 1. Compute q - self.
+        let (d0, cc) = subborrow_u64(Self::MODULUS[0], self.0[0], 0);
+        let (d1, cc) = subborrow_u64(Self::MODULUS[1], self.0[1], cc);
+        let (d2, cc) = subborrow_u64(Self::MODULUS[2], self.0[2], cc);
+        let (d3, cc) = subborrow_u64(Self::MODULUS[3], self.0[3], cc);
 
-        // 2. If the result is negative, add back q = 2^255 - MQ.
-        let e = (cc as u64).wrapping_neg();
-        let (d0, cc) = addcarry_u64(d0, e & MQ.wrapping_neg(), 0);
-        let (d1, cc) = addcarry_u64(d1, e, cc);
-        let (d2, cc) = addcarry_u64(d2, e, cc);
-        let (d3, _) = addcarry_u64(d3, e >> 1, cc);
+        // 2. In case of an output borrow, add q.
+        let m = (cc as u64).wrapping_neg();
+        let (d0, cc) = addcarry_u64(d0, Self::MODULUS[0] & m, 0);
+        let (d1, cc) = addcarry_u64(d1, Self::MODULUS[1] & m, cc);
+        let (d2, cc) = addcarry_u64(d2, Self::MODULUS[2] & m, cc);
+        let (d3, _)  = addcarry_u64(d3, Self::MODULUS[3] & m, cc);
 
+        // No further action needed since 2*q - x cannot be negative for
+        // x < 2^256.
         self.0[0] = d0;
         self.0[1] = d1;
         self.0[2] = d2;
@@ -266,10 +269,12 @@ impl<const MQ: u64> GF255<MQ> {
 
         // 2. If the dropped bit was 1, add back (q+1)/2. Since the value
         // was right-shifted, and (q+1)/2 < 2^255, this cannot overflow.
-        let (d0, cc) = addcarry_u64(d0, tt & ((MQ - 1) >> 1).wrapping_neg(), 0);
-        let (d1, cc) = addcarry_u64(d1, tt, cc);
-        let (d2, cc) = addcarry_u64(d2, tt, cc);
-        let (d3, _) = addcarry_u64(d3, tt >> 2, cc);
+        // Optimization note: lowest limb of (q+1)/2 is zero; we expect the
+        // compiler to optimize it out when inlining these calls.
+        let (d0, cc) = addcarry_u64(d0, tt & Self::HALFMOD[0], 0);
+        let (d1, cc) = addcarry_u64(d1, tt & Self::HALFMOD[1], cc);
+        let (d2, cc) = addcarry_u64(d2, tt & Self::HALFMOD[2], cc);
+        let (d3, _)  = addcarry_u64(d3, tt & Self::HALFMOD[3], cc);
 
         self.0[0] = d0;
         self.0[1] = d1;
@@ -284,29 +289,53 @@ impl<const MQ: u64> GF255<MQ> {
         r
     }
 
-    // Multiply this value by 2.
-    #[inline]
-    pub fn set_mul2(&mut self) {
-        // 1. Extract top bits.
-        let tt = self.0[3] >> 62;
+    // Reduction by wrapping top bits (d4).
+    // Requirement: d4 <= 2^32
+    #[inline(always)]
+    fn set_wrap_small(&mut self, d0: u64, d1: u64, d2: u64, d3: u64, d4: u64) {
+        // 2^256 = 2^224 - 2^192 - 2^96 + 1 mod q
+        // We compute in w0..w3 the product d4*(2^224 - 2^192 - 2^96 + 1)
+        // (since d4 <= 2^32, that product fits on 256 bits).
+        let w0 = d4;
+        let (w1, cc) = subborrow_u64(0, d4 << 32, 0);
+        let (w2, cc) = subborrow_u64(0, d4 >> 32, cc);
+        let (w3, _)  = subborrow_u64(d4 << 32, d4, cc);
 
-        // 2. Left-shift (also clearing the extracted bits).
-        let d0 = self.0[0] << 1;
-        let d1 = (self.0[0] >> 63) | (self.0[1] << 1);
-        let d2 = (self.0[1] >> 63) | (self.0[2] << 1);
-        let d3 = (self.0[2] >> 63) | ((self.0[3] << 1) & 0x7FFFFFFFFFFFFFFF);
+        // Add w to d.
+        let (d0, cc) = addcarry_u64(d0, w0, 0);
+        let (d1, cc) = addcarry_u64(d1, w1, cc);
+        let (d2, cc) = addcarry_u64(d2, w2, cc);
+        let (d3, cc) = addcarry_u64(d3, w3, cc);
 
-        // 3. Add back the top bits with reduction. Since we extracted
-        // one more bit than needed, this cannot overflow.
-        let (d0, cc) = addcarry_u64(d0, tt * MQ, 0);
-        let (d1, cc) = addcarry_u64(d1, 0, cc);
-        let (d2, cc) = addcarry_u64(d2, 0, cc);
-        let (d3, _)  = addcarry_u64(d3, 0, cc);
+        // 4. On carry, subtract q. Since we added at most:
+        //    (2^32)*(2^224 - 2^192 - 2^96 + 1)
+        // which is lower than q, subtracting q once is enough.
+        let m = (cc as u64).wrapping_neg();
+        let (d0, cc) = subborrow_u64(d0, m & Self::MODULUS[0], 0);
+        let (d1, cc) = subborrow_u64(d1, m & Self::MODULUS[1], cc);
+        let (d2, cc) = subborrow_u64(d2, m & Self::MODULUS[2], cc);
+        let (d3, _)  = subborrow_u64(d3, m & Self::MODULUS[3], cc);
 
         self.0[0] = d0;
         self.0[1] = d1;
         self.0[2] = d2;
         self.0[3] = d3;
+    }
+
+    // Multiply this value by 2.
+    #[inline]
+    pub fn set_mul2(&mut self) {
+        // 1. Extract top bit.
+        let tt = self.0[3] >> 63;
+
+        // 2. Left-shift.
+        let d0 = self.0[0] << 1;
+        let d1 = (self.0[0] >> 63) | (self.0[1] << 1);
+        let d2 = (self.0[1] >> 63) | (self.0[2] << 1);
+        let d3 = (self.0[2] >> 63) | (self.0[3] << 1);
+
+        // 3. Wrap top bit.
+        self.set_wrap_small(d0, d1, d2, d3, tt);
     }
 
     #[inline(always)]
@@ -316,29 +345,49 @@ impl<const MQ: u64> GF255<MQ> {
         r
     }
 
+    // Multiply this value by 3.
+    #[inline]
+    pub fn set_mul3(&mut self) {
+        // 1. Extract top bit.
+        let tt = self.0[3] >> 63;
+
+        // 2. Left-shift and add.
+        let d0 = self.0[0] << 1;
+        let d1 = (self.0[0] >> 63) | (self.0[1] << 1);
+        let d2 = (self.0[1] >> 63) | (self.0[2] << 1);
+        let d3 = (self.0[2] >> 63) | (self.0[3] << 1);
+        let (d0, cc) = addcarry_u64(d0, self.0[0], 0);
+        let (d1, cc) = addcarry_u64(d1, self.0[1], cc);
+        let (d2, cc) = addcarry_u64(d2, self.0[2], cc);
+        let (d3, cc) = addcarry_u64(d3, self.0[3], cc);
+        let (tt, _)  = addcarry_u64(tt, 0, cc);
+
+        // 3. Wrap top bits.
+        self.set_wrap_small(d0, d1, d2, d3, tt);
+    }
+
+    #[inline(always)]
+    pub fn mul3(self) -> Self {
+        let mut r = self;
+        r.set_mul3();
+        r
+    }
+
+
     // Multiply this value by 4.
     #[inline]
     pub fn set_mul4(&mut self) {
         // 1. Extract top bits.
-        let tt = self.0[3] >> 61;
+        let tt = self.0[3] >> 62;
 
-        // 2. Left-shift (also clearing the extracted bits).
+        // 2. Left-shift.
         let d0 = self.0[0] << 2;
         let d1 = (self.0[0] >> 62) | (self.0[1] << 2);
         let d2 = (self.0[1] >> 62) | (self.0[2] << 2);
-        let d3 = (self.0[2] >> 62) | ((self.0[3] << 2) & 0x7FFFFFFFFFFFFFFF);
+        let d3 = (self.0[2] >> 62) | (self.0[3] << 2);
 
-        // 3. Add back the top bits with reduction. Since we extracted
-        // one more bit than needed, this cannot overflow.
-        let (d0, cc) = addcarry_u64(d0, tt * MQ, 0);
-        let (d1, cc) = addcarry_u64(d1, 0, cc);
-        let (d2, cc) = addcarry_u64(d2, 0, cc);
-        let (d3, _)  = addcarry_u64(d3, 0, cc);
-
-        self.0[0] = d0;
-        self.0[1] = d1;
-        self.0[2] = d2;
-        self.0[3] = d3;
+        // 3. Wrap top bits.
+        self.set_wrap_small(d0, d1, d2, d3, tt);
     }
 
     #[inline(always)]
@@ -352,25 +401,16 @@ impl<const MQ: u64> GF255<MQ> {
     #[inline]
     pub fn set_mul8(&mut self) {
         // 1. Extract top bits.
-        let tt = self.0[3] >> 60;
+        let tt = self.0[3] >> 61;
 
-        // 2. Left-shift (also clearing the extracted bits).
+        // 2. Left-shift.
         let d0 = self.0[0] << 3;
         let d1 = (self.0[0] >> 61) | (self.0[1] << 3);
         let d2 = (self.0[1] >> 61) | (self.0[2] << 3);
-        let d3 = (self.0[2] >> 61) | ((self.0[3] << 3) & 0x7FFFFFFFFFFFFFFF);
+        let d3 = (self.0[2] >> 61) | (self.0[3] << 3);
 
-        // 3. Add back the top bits with reduction. Since we extracted
-        // one more bit than needed, this cannot overflow.
-        let (d0, cc) = addcarry_u64(d0, tt * MQ, 0);
-        let (d1, cc) = addcarry_u64(d1, 0, cc);
-        let (d2, cc) = addcarry_u64(d2, 0, cc);
-        let (d3, _)  = addcarry_u64(d3, 0, cc);
-
-        self.0[0] = d0;
-        self.0[1] = d1;
-        self.0[2] = d2;
-        self.0[3] = d3;
+        // 3. Wrap top bits.
+        self.set_wrap_small(d0, d1, d2, d3, tt);
     }
 
     #[inline(always)]
@@ -384,25 +424,16 @@ impl<const MQ: u64> GF255<MQ> {
     #[inline]
     pub fn set_mul16(&mut self) {
         // 1. Extract top bits.
-        let tt = self.0[3] >> 59;
+        let tt = self.0[3] >> 60;
 
-        // 2. Left-shift (also clearing the extracted bits).
+        // 2. Left-shift.
         let d0 = self.0[0] << 4;
         let d1 = (self.0[0] >> 60) | (self.0[1] << 4);
         let d2 = (self.0[1] >> 60) | (self.0[2] << 4);
-        let d3 = (self.0[2] >> 60) | ((self.0[3] << 4) & 0x7FFFFFFFFFFFFFFF);
+        let d3 = (self.0[2] >> 60) | (self.0[3] << 4);
 
-        // 3. Add back the top bits with reduction. Since we extracted
-        // one more bit than needed, this cannot overflow.
-        let (d0, cc) = addcarry_u64(d0, tt * MQ, 0);
-        let (d1, cc) = addcarry_u64(d1, 0, cc);
-        let (d2, cc) = addcarry_u64(d2, 0, cc);
-        let (d3, _)  = addcarry_u64(d3, 0, cc);
-
-        self.0[0] = d0;
-        self.0[1] = d1;
-        self.0[2] = d2;
-        self.0[3] = d3;
+        // 3. Wrap top bits.
+        self.set_wrap_small(d0, d1, d2, d3, tt);
     }
 
     #[inline(always)]
@@ -416,25 +447,16 @@ impl<const MQ: u64> GF255<MQ> {
     #[inline]
     pub fn set_mul32(&mut self) {
         // 1. Extract top bits.
-        let tt = self.0[3] >> 58;
+        let tt = self.0[3] >> 59;
 
-        // 2. Left-shift (also clearing the extracted bits).
+        // 2. Left-shift.
         let d0 = self.0[0] << 5;
         let d1 = (self.0[0] >> 59) | (self.0[1] << 5);
         let d2 = (self.0[1] >> 59) | (self.0[2] << 5);
-        let d3 = (self.0[2] >> 59) | ((self.0[3] << 5) & 0x7FFFFFFFFFFFFFFF);
+        let d3 = (self.0[2] >> 59) | (self.0[3] << 5);
 
-        // 3. Add back the top bits with reduction. Since we extracted
-        // one more bit than needed, this cannot overflow.
-        let (d0, cc) = addcarry_u64(d0, tt * MQ, 0);
-        let (d1, cc) = addcarry_u64(d1, 0, cc);
-        let (d2, cc) = addcarry_u64(d2, 0, cc);
-        let (d3, _)  = addcarry_u64(d3, 0, cc);
-
-        self.0[0] = d0;
-        self.0[1] = d1;
-        self.0[2] = d2;
-        self.0[3] = d3;
+        // 3. Wrap top bits.
+        self.set_wrap_small(d0, d1, d2, d3, tt);
     }
 
     #[inline(always)]
@@ -461,21 +483,8 @@ impl<const MQ: u64> GF255<MQ> {
         let (d3, cc) = addcarry_u64(d3, lo, cc);
         let (d4, _)  = addcarry_u64(d4, 0, cc);
 
-        // Do the reduction by folding the top word (d4) _and_ the top bit
-        // of the previous word (d3). Since that frees up the top bit, only
-        // one pass is needed.
-        // Maximum fold value is (2^33 - 3)*MQ, which fits on 64 bits as
-        // long as MQ <= 2^31.
-        let d4 = ((d4 << 1) | (d3 >> 63)) * MQ;
-        let (d0, cc) = addcarry_u64(d0, d4, 0);
-        let (d1, cc) = addcarry_u64(d1, 0, cc);
-        let (d2, cc) = addcarry_u64(d2, 0, cc);
-        let (d3, _)  = addcarry_u64(d3 & 0x7FFFFFFFFFFFFFFF, 0, cc);
-
-        self.0[0] = d0;
-        self.0[1] = d1;
-        self.0[2] = d2;
-        self.0[3] = d3;
+        // Fold top word.
+        self.set_wrap_small(d0, d1, d2, d3, d4);
     }
 
     #[inline(always)]
@@ -483,6 +492,112 @@ impl<const MQ: u64> GF255<MQ> {
         let mut r = self;
         r.set_mul_small(x);
         r
+    }
+
+    // Reduction of a 320-bit value.
+    #[inline(always)]
+    fn set_wrap_medium(&mut self, d0: u64, d1: u64, d2: u64, d3: u64, d4: u64) {
+        // w <- d4*(2^224 - 2^192 - 2^96 + 1)
+        let w0 = d4;
+        let (w1, cc) = subborrow_u64(0, d4 << 32, 0);
+        let (w2, cc) = subborrow_u64(0, d4 >> 32, cc);
+        let (w3, cc) = subborrow_u64(d4 << 32, d4, cc);
+        let (w4, _)  = subborrow_u64(d4 >> 32, 0, cc);
+
+        // d4 < 2^64, hence w < 2^288 and w4 <= 2^32 - 1.
+
+        // Add w to d0..d3, with extra bits into w4.
+        let (d0, cc) = addcarry_u64(d0, w0, 0);
+        let (d1, cc) = addcarry_u64(d1, w1, cc);
+        let (d2, cc) = addcarry_u64(d2, w2, cc);
+        let (d3, cc) = addcarry_u64(d3, w3, cc);
+        let (w4, _)  = addcarry_u64(0, w4, cc);
+
+        // Now w4 <= 2^32; we can use set_wrap_small() to finish the reduction.
+        self.set_wrap_small(d0, d1, d2, d3, w4);
+    }
+
+    // Reduction of a 512-bit value.
+    #[inline(always)]
+    fn set_wrap_large(&mut self, e0: u64, e1: u64, e2: u64, e3: u64,
+        e4: u64, e5: u64, e6: u64, e7: u64)
+    {
+        // The value can be partially reduced as follows:
+        //   - take the low half e0..e3
+        //   - add the following:
+        //      q*2^34
+        //      e4 + (e4 << 224)
+        //      (e5 << 32) + (e5 << 64)
+        //      2*(e6 << 96) + 2*(e6 << 128)
+        //      (e7 << 128) + 2*(e7 << 160) + 3*(e7 << 192)
+        //   - subtract the following:
+        //      (e4 << 96) + (e4 << 192)
+        //      (e5 << 128) + (e5 << 160) + (e5 << 224)
+        //      e6 + (e6 << 32) + (e6 << 224)
+        //      e7 + (e7 << 32) + (e7 << 64)
+        // The addition of q*2^34 ensures that the result is non-negative;
+        // it will also be lower than 2^(256+35), so the remaining word to
+        // fold fits on 35 bits.
+        //
+        // We try to minimize the number of carry propagation passes
+        // to perform.
+
+        // add e4 + (e5 << 64) + (e7 << 128) + (e7 << 192)
+        let (e0, cc) = addcarry_u64(e0, e4, 0);
+        let (e1, cc) = addcarry_u64(e1, e5, cc);
+        let (e2, cc) = addcarry_u64(e2, e7, cc);
+        let (e3, cc) = addcarry_u64(e3, e7, cc);
+        let eh = cc as u64;
+
+        // add 2*(e6 << 128) + 2*(e7 << 192)
+        let (e2, cc) = addcarry_u64(e2, e6 << 1, 0);
+        let (e3, cc) = addcarry_u64(e3, (e6 >> 63) | (e7 << 1), cc);
+        let (eh, _)  = addcarry_u64(eh, e7 >> 63, cc);
+
+        // add (e5 << 32) + 2*(e6 << 96) + 2*(e7 << 160)
+        let (e0, cc) = addcarry_u64(e0, e5 << 32, 0);
+        let (e1, cc) = addcarry_u64(e1, (e5 >> 32) | (e6 << 33), cc);
+        let (e2, cc) = addcarry_u64(e2, (e6 >> 31) | (e7 << 33), cc);
+        let (e3, cc) = addcarry_u64(e3, e7 >> 31, cc);
+        let (eh, _)  = addcarry_u64(eh, 0, cc);
+
+        // add (e4 << 224)
+        let (e3, cc) = addcarry_u64(e3, e4 << 32, 0);
+        let (eh, _)  = addcarry_u64(eh, e4 >> 32, cc);
+
+        // add q*2^34
+        let (e0, cc) = addcarry_u64(e0, Self::MODT34[0], 0);
+        let (e1, cc) = addcarry_u64(e1, Self::MODT34[1], cc);
+        let (e2, cc) = addcarry_u64(e2, Self::MODT34[2], cc);
+        let (e3, cc) = addcarry_u64(e3, Self::MODT34[3], cc);
+        let (eh, _)  = addcarry_u64(eh, Self::MODT34[4], cc);
+
+        // subtract e7 + (e7 << 64) + (e5 << 128) + (e4 << 192)
+        let (e0, cc) = subborrow_u64(e0, e7, 0);
+        let (e1, cc) = subborrow_u64(e1, e7, cc);
+        let (e2, cc) = subborrow_u64(e2, e5, cc);
+        let (e3, cc) = subborrow_u64(e3, e4, cc);
+        let (eh, _)  = subborrow_u64(eh, 0, cc);
+
+        // subtract (e6 << 32) + (e4 << 96) + (e5 << 160) + (e5 << 224)
+        let (e0, cc) = subborrow_u64(e0, e6 << 32, 0);
+        let (e1, cc) = subborrow_u64(e1, (e6 >> 32) | (e4 << 32), cc);
+        let (e2, cc) = subborrow_u64(e2, (e4 >> 32) | (e5 << 32), cc);
+        let (e3, cc) = subborrow_u64(e3, (e5 >> 32) | (e5 << 32), cc);
+        let (eh, _)  = subborrow_u64(eh, e5 >> 32, cc);
+
+        // subtract e6 + (e7 << 32) + (e6 << 224)
+        let (t6, cc) = addcarry_u64(e6, e7 << 32, 0);
+        let (t7, _)  = addcarry_u64(0, e7 >> 32, cc);
+        let (e0, cc) = subborrow_u64(e0, t6, 0);
+        let (e1, cc) = subborrow_u64(e1, t7, cc);
+        let (e2, cc) = subborrow_u64(e2, 0, cc);
+        let (e3, cc) = subborrow_u64(e3, e6 << 32, cc);
+        let (eh, _)  = subborrow_u64(eh, e6 >> 32, cc);
+
+        // We have a non-negative result over 5 words (e0:e1:e2:e3:eh);
+        // top word might be up to 35 bits.
+        self.set_wrap_medium(e0, e1, e2, e3, eh);
     }
 
     #[inline(always)]
@@ -546,36 +661,8 @@ impl<const MQ: u64> GF255<MQ> {
         let (e6, cc) = addcarry_u64(e6, 0, cc);
         let (e7, _)  = addcarry_u64(e7, 0, cc);
 
-        // 2. Reduction
-        // We fold the upper words in two steps; first step adds the
-        // low words of the multiplication by 2*MQ, while high words
-        // of these products are kept in h0..h3.
-        let (lo, h0) = umull(e4, 2 * MQ);
-        let (e0, cc) = addcarry_u64(e0, lo, 0);
-        let (lo, h1) = umull(e5, 2 * MQ);
-        let (e1, cc) = addcarry_u64(e1, lo, cc);
-        let (lo, h2) = umull(e6, 2 * MQ);
-        let (e2, cc) = addcarry_u64(e2, lo, cc);
-        let (lo, h3) = umull(e7, 2 * MQ);
-        let (e3, cc) = addcarry_u64(e3, lo, cc);
-        let (h3, _)  = addcarry_u64(h3, 0, cc);
-
-        // Max value for h3 is 1 + floor(2*MQ*(2^64 - 1) / 2^64).
-        // We then compute (2*h3 + b)*MQ, with b being the top bit of e3
-        // (i.e. b = 0 or 1). This value fits on 64 bits as long as
-        // MQ <= 2^31 - 1.
-
-        let h3 = (h3 << 1) | (e3 >> 63);
-        let e3 = e3 & 0x7FFFFFFFFFFFFFFF;
-        let (e0, cc) = addcarry_u64(e0, h3 * MQ, 0);
-        let (e1, cc) = addcarry_u64(e1, h0, cc);
-        let (e2, cc) = addcarry_u64(e2, h1, cc);
-        let (e3, _)  = addcarry_u64(e3, h2, cc);
-
-        self.0[0] = e0;
-        self.0[1] = e1;
-        self.0[2] = e2;
-        self.0[3] = e3;
+        // 2. Reduction.
+        self.set_wrap_large(e0, e1, e2, e3, e4, e5, e6, e7);
     }
 
     // Square this value (in place).
@@ -629,29 +716,7 @@ impl<const MQ: u64> GF255<MQ> {
         let (e7, _)  = addcarry_u64(e7, hi, cc);
 
         // 3. Reduction.
-        // See set_mul() for comments on the range; this is the same
-        // reduction.
-        let (lo, h0) = umull(e4, 2 * MQ);
-        let (e0, cc) = addcarry_u64(e0, lo, 0);
-        let (lo, h1) = umull(e5, 2 * MQ);
-        let (e1, cc) = addcarry_u64(e1, lo, cc);
-        let (lo, h2) = umull(e6, 2 * MQ);
-        let (e2, cc) = addcarry_u64(e2, lo, cc);
-        let (lo, h3) = umull(e7, 2 * MQ);
-        let (e3, cc) = addcarry_u64(e3, lo, cc);
-        let (h3, _)  = addcarry_u64(h3, 0, cc);
-
-        let h3 = (h3 << 1) | (e3 >> 63);
-        let e3 = e3 & 0x7FFFFFFFFFFFFFFF;
-        let (e0, cc) = addcarry_u64(e0, h3 * MQ, 0);
-        let (e1, cc) = addcarry_u64(e1, h0, cc);
-        let (e2, cc) = addcarry_u64(e2, h1, cc);
-        let (e3, _)  = addcarry_u64(e3, h2, cc);
-
-        self.0[0] = e0;
-        self.0[1] = e1;
-        self.0[2] = e2;
-        self.0[3] = e3;
+        self.set_wrap_large(e0, e1, e2, e3, e4, e5, e6, e7);
     }
 
     // Square this value.
@@ -682,25 +747,18 @@ impl<const MQ: u64> GF255<MQ> {
     // range.
     #[inline]
     fn set_normalized(&mut self) {
-        // Propagate top bit if set.
-        let e = (self.0[3] >> 63).wrapping_neg();
-        let (d0, cc) = addcarry_u64(self.0[0], e & MQ, 0);
-        let (d1, cc) = addcarry_u64(self.0[1], 0, cc);
-        let (d2, cc) = addcarry_u64(self.0[2], 0, cc);
-        let (d3, _)  = addcarry_u64(self.0[3] & 0x7FFFFFFFFFFFFFFF, 0, cc);
+        // Subtract q.
+        let (d0, cc) = subborrow_u64(self.0[0], Self::MODULUS[0], 0);
+        let (d1, cc) = subborrow_u64(self.0[1], Self::MODULUS[1], cc);
+        let (d2, cc) = subborrow_u64(self.0[2], Self::MODULUS[2], cc);
+        let (d3, cc) = subborrow_u64(self.0[3], Self::MODULUS[3], cc);
 
-        // Value is now at most 2^255 + MQ - 1. Subtract q, then add it
-        // back in case the result would be negative.
-        let (d0, cc) = subborrow_u64(d0, MQ.wrapping_neg(), 0);
-        let (d1, cc) = subborrow_u64(d1, !0u64, cc);
-        let (d2, cc) = subborrow_u64(d2, !0u64, cc);
-        let (d3, cc) = subborrow_u64(d3, (!0u64) >> 1, cc);
-
-        let e = (cc as u64).wrapping_neg();
-        let (d0, cc) = addcarry_u64(d0, e & MQ.wrapping_neg(), 0);
-        let (d1, cc) = addcarry_u64(d1, e, cc);
-        let (d2, cc) = addcarry_u64(d2, e, cc);
-        let (d3, _)  = addcarry_u64(d3, e >> 1, cc);
+        // Add back q if there was a borrow.
+        let m = (cc as u64).wrapping_neg();
+        let (d0, cc) = addcarry_u64(d0, m & Self::MODULUS[0], 0);
+        let (d1, cc) = addcarry_u64(d1, m & Self::MODULUS[1], cc);
+        let (d2, cc) = addcarry_u64(d2, m & Self::MODULUS[2], cc);
+        let (d3, _)  = addcarry_u64(d3, m & Self::MODULUS[3], cc);
 
         self.0[0] = d0;
         self.0[1] = d1;
@@ -733,23 +791,7 @@ impl<const MQ: u64> GF255<MQ> {
         let (d3, t) = umull_x2_add(tu.0[3], f, tv.0[3], g, t);
 
         // Upper word t can be up to 63 bits.
-        let (lo, hi) = umull(t, 2 * MQ);
-        let (d0, cc) = addcarry_u64(d0, lo, 0);
-        let (d1, cc) = addcarry_u64(d1, hi, cc);
-        let (d2, cc) = addcarry_u64(d2, 0, cc);
-        let (d3, cc) = addcarry_u64(d3, 0, cc);
-
-        // If there is a carry, then current value is lower than
-        // 2 * MQ * 2^63, and the folding cannot propagate beyond the
-        // second limb.
-        let (d0, cc) = addcarry_u64(d0,
-            (cc as u64).wrapping_neg() & (2 * MQ), 0);
-        let (d1, _)  = addcarry_u64(d1, 0, cc);
-
-        self.0[0] = d0;
-        self.0[1] = d1;
-        self.0[2] = d2;
-        self.0[3] = d3;
+        self.set_wrap_medium(d0, d1, d2, d3, t);
     }
 
     #[inline(always)]
@@ -760,7 +802,7 @@ impl<const MQ: u64> GF255<MQ> {
     }
 
     // Set this value to abs((a*f+b*g)/2^31). Values a and b are interpreted
-    // as signed 256-bit integers. Coefficients f and g are provided as u64,
+    // as unsigned 256-bit integers. Coefficients f and g are provided as u64,
     // but they really are signed integers in the -2^31..+2^31 range
     // (inclusive). The low 31 bits are dropped (i.e. the division is assumed
     // to be exact). The result is assumed to fit in 256 bits (including the
@@ -780,11 +822,13 @@ impl<const MQ: u64> GF255<MQ> {
         let (a0, cc) = subborrow_u64(a.0[0] ^ sf, sf, 0);
         let (a1, cc) = subborrow_u64(a.0[1] ^ sf, sf, cc);
         let (a2, cc) = subborrow_u64(a.0[2] ^ sf, sf, cc);
-        let (a3, _)  = subborrow_u64(a.0[3] ^ sf, sf, cc);
+        let (a3, cc) = subborrow_u64(a.0[3] ^ sf, sf, cc);
+        let (a4, _)  = subborrow_u64(0, 0, cc);
         let (b0, cc) = subborrow_u64(b.0[0] ^ sg, sg, 0);
         let (b1, cc) = subborrow_u64(b.0[1] ^ sg, sg, cc);
         let (b2, cc) = subborrow_u64(b.0[2] ^ sg, sg, cc);
-        let (b3, _)  = subborrow_u64(b.0[3] ^ sg, sg, cc);
+        let (b3, cc) = subborrow_u64(b.0[3] ^ sg, sg, cc);
+        let (b4, _)  = subborrow_u64(0, 0, cc);
 
         // Compute a*f+b*g into d0:d1:d2:d3:t. Since f and g are at
         // most 2^31, we can add two 128-bit products with no overflow.
@@ -792,22 +836,17 @@ impl<const MQ: u64> GF255<MQ> {
         let (d1, t) = umull_x2_add(a1, f, b1, g, t);
         let (d2, t) = umull_x2_add(a2, f, b2, g, t);
         let (d3, t) = umull_x2_add(a3, f, b3, g, t);
-
-        // If a < 0, then the result is overestimated by f*2^256;
-        // similarly, if b < 0 then the result is overestimated by g*2^256.
-        // We must thus subtract 2^256*(sa*f+sb*g), with sa and sb being
-        // the signs of a and b, respectively (1 for negative, 0 otherwise).
-        let t = t.wrapping_sub(f & sgnw(a3));
-        let t = t.wrapping_sub(g & sgnw(b3));
+        // d4 <- a4*f + b4*g + t; a4 and b4 can be only 0 or -1
+        let d4 = t.wrapping_sub(a4 & f).wrapping_sub(b4 & g);
 
         // Shift-right the value by 31 bits.
         let d0 = (d0 >> 31) | (d1 << 33);
         let d1 = (d1 >> 31) | (d2 << 33);
         let d2 = (d2 >> 31) | (d3 << 33);
-        let d3 = (d3 >> 31) | (t << 33);
+        let d3 = (d3 >> 31) | (d4 << 33);
 
         // If the result is negative, then negate it.
-        let t = (t >> 63).wrapping_neg();
+        let t = sgnw(d4);
         let (d0, cc) = subborrow_u64(d0 ^ t, t, 0);
         let (d1, cc) = subborrow_u64(d1 ^ t, t, cc);
         let (d2, cc) = subborrow_u64(d2 ^ t, t, cc);
@@ -857,12 +896,7 @@ impl<const MQ: u64> GF255<MQ> {
 
         let mut a = *y;
         a.set_normalized();
-        let mut b = Self([
-            MQ.wrapping_neg(),
-            0xFFFFFFFFFFFFFFFF,
-            0xFFFFFFFFFFFFFFFF,
-            0x7FFFFFFFFFFFFFFF,
-        ]);
+        let mut b = Self(Self::MODULUS);
         let mut u = *self;
         let mut v = Self::ZERO;
 
@@ -965,8 +999,8 @@ impl<const MQ: u64> GF255<MQ> {
         }
 
         // If y is invertible, then the final GCD is 1, and
-        // len(a) + len(b) <= 45, so we can end the computation with
-        // the low words directly. We only need 43 iterations to reach
+        // len(a) + len(b) <= 47, so we can end the computation with
+        // the low words directly. We only need 45 iterations to reach
         // the point where b = 1.
         //
         // If y is zero, then v is unchanged (hence zero) and none of
@@ -978,7 +1012,7 @@ impl<const MQ: u64> GF255<MQ> {
         let mut g0 = 0u64;
         let mut f1 = 0u64;
         let mut g1 = 1u64;
-        for _ in 0..43 {
+        for _ in 0..45 {
             let a_odd = (xa & 1).wrapping_neg();
             let (_, cc) = subborrow_u64(xa, xb, 0);
             let swap = a_odd & (cc as u64).wrapping_neg();
@@ -1002,10 +1036,10 @@ impl<const MQ: u64> GF255<MQ> {
         self.set_lin(&u, &v, f1, g1);
 
         // At this point, we have injected extra factors of 2, one for
-        // each of the 31*15+43 = 508 iterations, so we must divide by
-        // 2^508 (mod q). This is done with a multiplication by the
+        // each of the 31*15+45 = 510 iterations, so we must divide by
+        // 2^510 (mod q). This is done with a multiplication by the
         // appropriate constant.
-        self.set_mul(&Self::INVT508);
+        self.set_mul(&Self::INVT510);
     }
 
     // Perform a batch inversion of some elements. All elements of
@@ -1062,16 +1096,11 @@ impl<const MQ: u64> GF255<MQ> {
         //    recomputation step for the next 2.
         // Otherwise, the 'a' and 'b' values are modified exactly as in
         // the binary GCD, so that we get the same guaranteed convergence
-        // in a total of 508 iterations.
+        // in a total of 510 iterations.
 
         let mut a = self;
         a.set_normalized();
-        let mut b = Self([
-            MQ.wrapping_neg(),
-            0xFFFFFFFFFFFFFFFF,
-            0xFFFFFFFFFFFFFFFF,
-            0x7FFFFFFFFFFFFFFF,
-        ]);
+        let mut b = Self(Self::MODULUS);
         let mut ls = 0u64;  // running symbol information in the low bit
 
         // Outer loop
@@ -1174,14 +1203,14 @@ impl<const MQ: u64> GF255<MQ> {
             b = nb;
         }
 
-        // Final iterations: values are at most 45 bits now. We do not
+        // Final iterations: values are at most 47 bits now. We do not
         // need to keep track of update coefficients. Just like the GCD,
-        // we need only 43 iterations, because after 43 iterations,
+        // we need only 45 iterations, because after 45 iterations,
         // value a is 0 or 1, and b is 1, and no further modification to
         // the Legendre symbol may happen.
         let mut xa = a.0[0];
         let mut xb = b.0[0];
-        for _ in 0..43 {
+        for _ in 0..45 {
             let a_odd = (xa & 1).wrapping_neg();
             let (_, cc) = subborrow_u64(xa, xb, 0);
             let swap = a_odd & (cc as u64).wrapping_neg();
@@ -1205,100 +1234,20 @@ impl<const MQ: u64> GF255<MQ> {
     // Set this value to its square root. Returned value is 0xFFFFFFFF
     // if the operation succeeded (value was indeed a quadratic
     // residue), 0 otherwise (value was not a quadratic residue). In the
-    // latter case, this value is set to the square root of -self (if
-    // q = 3 mod 4) or of either 2*self or -2*self (if q = 5 mod 8). In
+    // latter case, this value is set to the square root of -self. In
     // all cases, the returned root is the one whose least significant
     // bit is 0 (when normalized in 0..q-1).
-    //
-    // This operation returns unspecified results if the modulus is not
-    // prime. If the modulus q is prime but is equal to 1 modulo 8, then
-    // the method is not implemented (which triggers a panic).
     fn set_sqrt_ext(&mut self) -> u32 {
-        // We can support only q = 3, 5 or 7 mod 8, not q = 1 mod 8.
-        // See compile_time_checks() for the compile-time verification
-        // that MQ matches that restriction.
-
-        // Input is denoted x in code comments.
-
-        // In both cases (q = 3 mod 4 and q = 5 mod 8), we need to compute
-        // a modular exponentiation, and the exponent's top 240 bits are
-        // all equal to one, so we have a common part to compute
-        // z^(2^240-1), with z being the exponentiated value. We also
-        // obtain z^2 and z^3 in the process, which we store in a 2-bit
-        // window for the end of the exponentiation.
-
-        // Base value is x if q = 3 mod 4, 2*x if q = 5 mod 8.
-        let z = if (MQ & 3) == 1 { *self } else { (*self).mul2() };
-        let z2 = z.square();
-        let z3 = z2 * z;
-        let zp4 = z3.xsquare(2) * z3;
-        let zp5 = zp4.square() * z;
-        let zp15 = (zp5.xsquare(5) * zp5).xsquare(5) * zp5;
-        let zp30 = zp15.xsquare(15) * zp15;
-        let zp60 = zp30.xsquare(30) * zp30;
-        let zp120 = zp60.xsquare(60) * zp60;
-        let zp240 = zp120.xsquare(120) * zp120;
-        let win: [Self; 3] = [ z, z2, z3 ];
-
-        // Candidate square root goes in y.
-        let mut y = zp240;
-
-        if (MQ & 3) == 1 {
-            // q = 3 mod 4; square root candidate is computed as:
-            //   y <- x^((q+1)/4)
-            // We need to process 13 extra exponent bits.
-            let e = MQ.wrapping_neg().wrapping_add(1) >> 2;
-            for i in 0..6 {
-                y.set_xsquare(2);
-                let k = ((e >> (11 - (2 * i))) & 3) as usize;
-                if k != 0 {
-                    y.set_mul(&win[k - 1]);
-                }
-            }
-            y.set_square();
-            if (e & 1) != 0 {
-                y.set_mul(&z);
-            }
-        } else if (MQ & 7) == 3 {
-            // q = 5 mod 8; we use Atkin's algorithm:
-            //   b <- (2*x)^((q-5)/8)
-            //   c <- 2*x*b^2
-            //   y <- x*b*(c - 1)
-            let e = MQ.wrapping_neg().wrapping_sub(5) >> 3;
-            let mut b = y;
-            for i in 0..6 {
-                b.set_xsquare(2);
-                let k = ((e >> (10 - (2 * i))) & 3) as usize;
-                if k != 0 {
-                    b.set_mul(&win[k - 1]);
-                }
-            }
-
-            // Compute c = 2*x*b^2.
-            let c = self.mul2() * b.square();
-
-            // We really computed c = (2*x)^((q-1)/4), which is a square
-            // root of the Legendre symbol of 2*x. With q = 5 mod 8, 2 is
-            // not a square. Thus, if the square root of x exists, then c is
-            // a square root of -1 (except if x = 0, in which case c = 0).
-            // Otherwise, c = 1 or -1.
-            // We compute y = x*b*(c' - 1); then:
-            //   y^2 = x*c*(c' - 1)^2/2
-            // If c = i or -i, then using c = c' (as mandated by Atkin's
-            // formulas) yields c*(c - 1)^2/2 = 1, i.e. y^2 = x, which is
-            // the expected result.
-            // If c = 1 or -1, then we set c' = 3, so that c*(c' - 1)^2/2
-            // is equal to 2 or -2, and y^2 = 2*x or -2*x.
-            let mut cp = c;
-            let ff = c.equals(Self::ONE) | c.equals(Self::MINUS_ONE);
-            cp.set_cond(&Self::w64le(3, 0, 0, 0), ff);
-            y = (*self) * b * (cp - Self::ONE);
-        } else {
-            // General case is Tonelli-Shanks but it requires knowledge
-            // of a non-QR in the field, which we don't provide in the
-            // type parameters.
-            unimplemented!();
-        }
+        // Candidate root is self^((q+1)/4).
+        // (q+1)/4 = 2^254 - 2^222 + 2^190 + 2^94
+        let z = *self;
+        let z2 = z.square() * z;
+        let z4 = z2.xsquare(2) * z2;
+        let z8 = z4.xsquare(4) * z4;
+        let z16 = z8.xsquare(8) * z8;
+        let z32 = z16.xsquare(16) * z16;
+        let mut y = ((z32.xsquare(32) * z).xsquare(96) * z).xsquare(94);
+        y.set_normalized();
 
         // Normalize y and negate it if necessary to set the low bit to 0.
         y.set_normalized();
@@ -1338,9 +1287,7 @@ impl<const MQ: u64> GF255<MQ> {
     //  - If this value is indeed a quadratic residue, then y is a
     //    square root of this value, and r is 0xFFFFFFFF.
     //  - If this value is not a quadratic residue, then y is set to
-    //    a square root of -x (if modulus q = 3 mod 4), or to a square
-    //    root of either 2*x or -2*x (if modulus q = 5 mod 8); morever,
-    //    r is set to 0x00000000.
+    //    a square root of -x, and r is 0x00000000.
     // In all cases, the returned root is normalized: the lest significant
     // bit of its integer representation (in the 0..q-1 range) is 0.
     #[inline(always)]
@@ -1350,6 +1297,7 @@ impl<const MQ: u64> GF255<MQ> {
         (x, r)
     }
 
+    /* TODO? Not very useful on this field.
     // Compute two signed integers (c0, c1) such that this self = c0/c1 in
     // the ring. WARNING: since the modulus is close to 2^255, and larger
     // than about 1.73*2^253, the returned values may be truncated. Indeed,
@@ -1371,6 +1319,7 @@ impl<const MQ: u64> GF255<MQ> {
         k.set_normalized();
         lagrange253_vartime(&k.0, &Self::MODULUS)
     }
+    */
 
     // Equality check between two field elements (constant-time);
     // returned value is 0xFFFFFFFF on equality, 0 otherwise.
@@ -1383,20 +1332,17 @@ impl<const MQ: u64> GF255<MQ> {
     // is 0xFFFFFFFF if this element is zero, 0 otherwise.
     #[inline]
     pub fn iszero(self) -> u32 {
-        // Since values are over 256 bits, there are three possible
-        // representations for 0: 0, q amnd 2*q.
+        // There are two possible representations for 0: 0 and q.
         let a0 = self.0[0];
         let a1 = self.0[1];
         let a2 = self.0[2];
         let a3 = self.0[3];
         let t0 = a0 | a1 | a2 | a3;
-        let t1 = a0.wrapping_add(MQ) | !a1 | !a2 | (a3 ^ 0x7FFFFFFFFFFFFFFF);
-        let t2 = a0.wrapping_add(2 * MQ) | !a1 | !a2 | !a3;
+        let t1 = (a0 ^ Self::MODULUS[0]) | (a1 ^ Self::MODULUS[1])
+            | (a2 ^ Self::MODULUS[2]) | (a3 ^ Self::MODULUS[3]);
 
-        // Top bit of r is 0 if and only if one of t0, t1 or t2 is zero.
-        let r = (t0 | t0.wrapping_neg())
-              & (t1 | t1.wrapping_neg())
-              & (t2 | t2.wrapping_neg());
+        // Top bit of r is 0 if and only if one of t0 or t1 is zero.
+        let r = (t0 | t0.wrapping_neg()) & (t1 | t1.wrapping_neg());
         ((r >> 63) as u32).wrapping_sub(1)
     }
 
@@ -1460,10 +1406,10 @@ impl<const MQ: u64> GF255<MQ> {
 
         // Try to subtract q from the value; if that does not yield a
         // borrow, then the encoding was not canonical.
-        let (_, cc) = subborrow_u64(self.0[0], MQ.wrapping_neg(), 0);
-        let (_, cc) = subborrow_u64(self.0[1], !0u64, cc);
-        let (_, cc) = subborrow_u64(self.0[2], !0u64, cc);
-        let (_, cc) = subborrow_u64(self.0[3], (!0u64) >> 1, cc);
+        let (_, cc) = subborrow_u64(self.0[0], Self::MODULUS[0], 0);
+        let (_, cc) = subborrow_u64(self.0[1], Self::MODULUS[1], cc);
+        let (_, cc) = subborrow_u64(self.0[2], Self::MODULUS[2], cc);
+        let (_, cc) = subborrow_u64(self.0[3], Self::MODULUS[3], cc);
 
         // Clear the value if not canonical.
         let cc = (cc as u64).wrapping_neg();
@@ -1542,27 +1488,8 @@ impl<const MQ: u64> GF255<MQ> {
                 ::try_from(&buf[k + 16..k + 24]).unwrap());
             let e3 = u64::from_le_bytes(*<&[u8; 8]>
                 ::try_from(&buf[k + 24..k + 32]).unwrap());
-            let (d0, h0) = umull(self.0[0], 2 * MQ);
-            let (d0, cc) = addcarry_u64(d0, e0, 0);
-            let (d1, h1) = umull(self.0[1], 2 * MQ);
-            let (d1, cc) = addcarry_u64(d1, e1, cc);
-            let (d2, h2) = umull(self.0[2], 2 * MQ);
-            let (d2, cc) = addcarry_u64(d2, e2, cc);
-            let (d3, h3) = umull(self.0[3], 2 * MQ);
-            let (d3, cc) = addcarry_u64(d3, e3, cc);
-            let (h3, _)  = addcarry_u64(h3, 0, cc);
-
-            let h3 = (h3 << 1) | (d3 >> 63);
-            let (d0, cc) = addcarry_u64(d0, h3 * MQ, 0);
-            let (d1, cc) = addcarry_u64(d1, h0, cc);
-            let (d2, cc) = addcarry_u64(d2, h1, cc);
-            let (d3, _)  = addcarry_u64(d3 & 0x7FFFFFFFFFFFFFFF, h2, cc);
-
-            self.0[0] = d0;
-            self.0[1] = d1;
-            self.0[2] = d2;
-            self.0[3] = d3;
-
+            self.set_wrap_large(e0, e1, e2, e3,
+                self.0[0], self.0[1], self.0[2], self.0[3]);
             n = k;
         }
     }
@@ -1576,369 +1503,262 @@ impl<const MQ: u64> GF255<MQ> {
         r.set_decode_reduce(buf);
         r
     }
-
-    // This function computes a representation of 1/2^508 at compile time.
-    // It is not meant to be used at runtime and has no constant-time
-    // requirement.
-    const fn make_invt508() -> Self {
-
-        const fn adc(x: u64, y: u64, c: u64) -> (u64, u64) {
-            let z = (x as u128).wrapping_add(y as u128).wrapping_add(c as u128);
-            (z as u64, (z >> 64) as u64)
-        }
-
-        const fn sqr<const MQ: u64>(a: GF255<MQ>) -> GF255<MQ> {
-            // This follows the same steps as the runtime set_square().
-            let (a0, a1, a2, a3) = (a.0[0], a.0[1], a.0[2], a.0[3]);
-
-            // 1. Non-square products. Max intermediate value:
-            let (e1, e2) = umull(a0, a1);
-            let (e3, e4) = umull(a0, a3);
-            let (e5, e6) = umull(a2, a3);
-            let (lo, hi) = umull(a0, a2);
-            let (e2, cc) = adc(e2, lo, 0);
-            let (e3, cc) = adc(e3, hi, cc);
-            let (lo, hi) = umull(a1, a3);
-            let (e4, cc) = adc(e4, lo, cc);
-            let (e5, cc) = adc(e5, hi, cc);
-            let (e6, _)  = adc(e6, 0, cc);
-            let (lo, hi) = umull(a1, a2);
-            let (e3, cc) = adc(e3, lo, 0);
-            let (e4, cc) = adc(e4, hi, cc);
-            let (e5, cc) = adc(e5, 0, cc);
-            let (e6, _)  = adc(e6, 0, cc);
-
-            // 2. Double the intermediate value, then add the squares.
-            let e7 = e6 >> 63;
-            let e6 = (e6 << 1) | (e5 >> 63);
-            let e5 = (e5 << 1) | (e4 >> 63);
-            let e4 = (e4 << 1) | (e3 >> 63);
-            let e3 = (e3 << 1) | (e2 >> 63);
-            let e2 = (e2 << 1) | (e1 >> 63);
-            let e1 = e1 << 1;
-
-            let (e0, hi) = umull(a0, a0);
-            let (e1, cc) = adc(e1, hi, 0);
-            let (lo, hi) = umull(a1, a1);
-            let (e2, cc) = adc(e2, lo, cc);
-            let (e3, cc) = adc(e3, hi, cc);
-            let (lo, hi) = umull(a2, a2);
-            let (e4, cc) = adc(e4, lo, cc);
-            let (e5, cc) = adc(e5, hi, cc);
-            let (lo, hi) = umull(a3, a3);
-            let (e6, cc) = adc(e6, lo, cc);
-            let (e7, _)  = adc(e7, hi, cc);
-
-            // 3. Reduction.
-            let (lo, h0) = umull(e4, 2 * MQ);
-            let (e0, cc) = adc(e0, lo, 0);
-            let (lo, h1) = umull(e5, 2 * MQ);
-            let (e1, cc) = adc(e1, lo, cc);
-            let (lo, h2) = umull(e6, 2 * MQ);
-            let (e2, cc) = adc(e2, lo, cc);
-            let (lo, h3) = umull(e7, 2 * MQ);
-            let (e3, cc) = adc(e3, lo, cc);
-            let (h3, _)  = adc(h3, 0, cc);
-
-            let h3 = (h3 << 1) | (e3 >> 63);
-            let e3 = e3 & 0x7FFFFFFFFFFFFFFF;
-            let (e0, cc) = adc(e0, h3 * MQ, 0);
-            let (e1, cc) = adc(e1, h0, cc);
-            let (e2, cc) = adc(e2, h1, cc);
-            let (e3, _)  = adc(e3, h2, cc);
-
-            GF255::<MQ>([ e0, e1, e2, e3 ])
-        }
-
-        // 1/2 = (q + 1)/2 mod q
-        let a = Self([
-            ((MQ - 1) >> 1).wrapping_neg(),
-            0xFFFFFFFFFFFFFFFF,
-            0xFFFFFFFFFFFFFFFF,
-            0x3FFFFFFFFFFFFFFF,
-        ]);
-
-        // square 9 times to get 1/2^512 mod q
-        let a = sqr::<MQ>(a);
-        let a = sqr::<MQ>(a);
-        let a = sqr::<MQ>(a);
-        let a = sqr::<MQ>(a);
-        let a = sqr::<MQ>(a);
-        let a = sqr::<MQ>(a);
-        let a = sqr::<MQ>(a);
-        let a = sqr::<MQ>(a);
-        let a = sqr::<MQ>(a);
-
-        // multiply by 16 to get the result (see set_mul16()).
-        let (a0, a1, a2, a3) = (a.0[0], a.0[1], a.0[2], a.0[3]);
-        let tt = a3 >> 59;
-        let d0 = a0 << 4;
-        let d1 = (a0 >> 60) | (a1 << 4);
-        let d2 = (a1 >> 60) | (a2 << 4);
-        let d3 = (a2 >> 60) | ((a3 << 4) & 0x7FFFFFFFFFFFFFFF);
-        let (d0, cc) = adc(d0, tt * MQ, 0);
-        let (d1, cc) = adc(d1, 0, cc);
-        let (d2, cc) = adc(d2, 0, cc);
-        let (d3, _)  = adc(d3, 0, cc);
-
-        Self([ d0, d1, d2, d3 ])
-    }
 }
 
 // ========================================================================
 // Implementations of all the traits needed to use the simple operators
 // (+, *, /...) on field element instances, with or without references.
 
-impl<const MQ: u64> Add<GF255<MQ>> for GF255<MQ> {
-    type Output = GF255<MQ>;
+impl Add<GFp256> for GFp256 {
+    type Output = GFp256;
 
     #[inline(always)]
-    fn add(self, other: GF255<MQ>) -> GF255<MQ> {
+    fn add(self, other: GFp256) -> GFp256 {
         let mut r = self;
         r.set_add(&other);
         r
     }
 }
 
-impl<const MQ: u64> Add<&GF255<MQ>> for GF255<MQ> {
-    type Output = GF255<MQ>;
+impl Add<&GFp256> for GFp256 {
+    type Output = GFp256;
 
     #[inline(always)]
-    fn add(self, other: &GF255<MQ>) -> GF255<MQ> {
+    fn add(self, other: &GFp256) -> GFp256 {
         let mut r = self;
         r.set_add(other);
         r
     }
 }
 
-impl<const MQ: u64> Add<GF255<MQ>> for &GF255<MQ> {
-    type Output = GF255<MQ>;
+impl Add<GFp256> for &GFp256 {
+    type Output = GFp256;
 
     #[inline(always)]
-    fn add(self, other: GF255<MQ>) -> GF255<MQ> {
+    fn add(self, other: GFp256) -> GFp256 {
         let mut r = *self;
         r.set_add(&other);
         r
     }
 }
 
-impl<const MQ: u64> Add<&GF255<MQ>> for &GF255<MQ> {
-    type Output = GF255<MQ>;
+impl Add<&GFp256> for &GFp256 {
+    type Output = GFp256;
 
     #[inline(always)]
-    fn add(self, other: &GF255<MQ>) -> GF255<MQ> {
+    fn add(self, other: &GFp256) -> GFp256 {
         let mut r = *self;
         r.set_add(other);
         r
     }
 }
 
-impl<const MQ: u64> AddAssign<GF255<MQ>> for GF255<MQ> {
+impl AddAssign<GFp256> for GFp256 {
     #[inline(always)]
-    fn add_assign(&mut self, other: GF255<MQ>) {
+    fn add_assign(&mut self, other: GFp256) {
         self.set_add(&other);
     }
 }
 
-impl<const MQ: u64> AddAssign<&GF255<MQ>> for GF255<MQ> {
+impl AddAssign<&GFp256> for GFp256 {
     #[inline(always)]
-    fn add_assign(&mut self, other: &GF255<MQ>) {
+    fn add_assign(&mut self, other: &GFp256) {
         self.set_add(other);
     }
 }
 
-impl<const MQ: u64> Div<GF255<MQ>> for GF255<MQ> {
-    type Output = GF255<MQ>;
+impl Div<GFp256> for GFp256 {
+    type Output = GFp256;
 
     #[inline(always)]
-    fn div(self, other: GF255<MQ>) -> GF255<MQ> {
+    fn div(self, other: GFp256) -> GFp256 {
         let mut r = self;
         r.set_div(&other);
         r
     }
 }
 
-impl<const MQ: u64> Div<&GF255<MQ>> for GF255<MQ> {
-    type Output = GF255<MQ>;
+impl Div<&GFp256> for GFp256 {
+    type Output = GFp256;
 
     #[inline(always)]
-    fn div(self, other: &GF255<MQ>) -> GF255<MQ> {
+    fn div(self, other: &GFp256) -> GFp256 {
         let mut r = self;
         r.set_div(other);
         r
     }
 }
 
-impl<const MQ: u64> Div<GF255<MQ>> for &GF255<MQ> {
-    type Output = GF255<MQ>;
+impl Div<GFp256> for &GFp256 {
+    type Output = GFp256;
 
     #[inline(always)]
-    fn div(self, other: GF255<MQ>) -> GF255<MQ> {
+    fn div(self, other: GFp256) -> GFp256 {
         let mut r = *self;
         r.set_div(&other);
         r
     }
 }
 
-impl<const MQ: u64> Div<&GF255<MQ>> for &GF255<MQ> {
-    type Output = GF255<MQ>;
+impl Div<&GFp256> for &GFp256 {
+    type Output = GFp256;
 
     #[inline(always)]
-    fn div(self, other: &GF255<MQ>) -> GF255<MQ> {
+    fn div(self, other: &GFp256) -> GFp256 {
         let mut r = *self;
         r.set_div(other);
         r
     }
 }
 
-impl<const MQ: u64> DivAssign<GF255<MQ>> for GF255<MQ> {
+impl DivAssign<GFp256> for GFp256 {
     #[inline(always)]
-    fn div_assign(&mut self, other: GF255<MQ>) {
+    fn div_assign(&mut self, other: GFp256) {
         self.set_div(&other);
     }
 }
 
-impl<const MQ: u64> DivAssign<&GF255<MQ>> for GF255<MQ> {
+impl DivAssign<&GFp256> for GFp256 {
     #[inline(always)]
-    fn div_assign(&mut self, other: &GF255<MQ>) {
+    fn div_assign(&mut self, other: &GFp256) {
         self.set_div(other);
     }
 }
 
-impl<const MQ: u64> Mul<GF255<MQ>> for GF255<MQ> {
-    type Output = GF255<MQ>;
+impl Mul<GFp256> for GFp256 {
+    type Output = GFp256;
 
     #[inline(always)]
-    fn mul(self, other: GF255<MQ>) -> GF255<MQ> {
+    fn mul(self, other: GFp256) -> GFp256 {
         let mut r = self;
         r.set_mul(&other);
         r
     }
 }
 
-impl<const MQ: u64> Mul<&GF255<MQ>> for GF255<MQ> {
-    type Output = GF255<MQ>;
+impl Mul<&GFp256> for GFp256 {
+    type Output = GFp256;
 
     #[inline(always)]
-    fn mul(self, other: &GF255<MQ>) -> GF255<MQ> {
+    fn mul(self, other: &GFp256) -> GFp256 {
         let mut r = self;
         r.set_mul(other);
         r
     }
 }
 
-impl<const MQ: u64> Mul<GF255<MQ>> for &GF255<MQ> {
-    type Output = GF255<MQ>;
+impl Mul<GFp256> for &GFp256 {
+    type Output = GFp256;
 
     #[inline(always)]
-    fn mul(self, other: GF255<MQ>) -> GF255<MQ> {
+    fn mul(self, other: GFp256) -> GFp256 {
         let mut r = *self;
         r.set_mul(&other);
         r
     }
 }
 
-impl<const MQ: u64> Mul<&GF255<MQ>> for &GF255<MQ> {
-    type Output = GF255<MQ>;
+impl Mul<&GFp256> for &GFp256 {
+    type Output = GFp256;
 
     #[inline(always)]
-    fn mul(self, other: &GF255<MQ>) -> GF255<MQ> {
+    fn mul(self, other: &GFp256) -> GFp256 {
         let mut r = *self;
         r.set_mul(other);
         r
     }
 }
 
-impl<const MQ: u64> MulAssign<GF255<MQ>> for GF255<MQ> {
+impl MulAssign<GFp256> for GFp256 {
     #[inline(always)]
-    fn mul_assign(&mut self, other: GF255<MQ>) {
+    fn mul_assign(&mut self, other: GFp256) {
         self.set_mul(&other);
     }
 }
 
-impl<const MQ: u64> MulAssign<&GF255<MQ>> for GF255<MQ> {
+impl MulAssign<&GFp256> for GFp256 {
     #[inline(always)]
-    fn mul_assign(&mut self, other: &GF255<MQ>) {
+    fn mul_assign(&mut self, other: &GFp256) {
         self.set_mul(other);
     }
 }
 
-impl<const MQ: u64> Neg for GF255<MQ> {
-    type Output = GF255<MQ>;
+impl Neg for GFp256 {
+    type Output = GFp256;
 
     #[inline(always)]
-    fn neg(self) -> GF255<MQ> {
+    fn neg(self) -> GFp256 {
         let mut r = self;
         r.set_neg();
         r
     }
 }
 
-impl<const MQ: u64> Neg for &GF255<MQ> {
-    type Output = GF255<MQ>;
+impl Neg for &GFp256 {
+    type Output = GFp256;
 
     #[inline(always)]
-    fn neg(self) -> GF255<MQ> {
+    fn neg(self) -> GFp256 {
         let mut r = *self;
         r.set_neg();
         r
     }
 }
 
-impl<const MQ: u64> Sub<GF255<MQ>> for GF255<MQ> {
-    type Output = GF255<MQ>;
+impl Sub<GFp256> for GFp256 {
+    type Output = GFp256;
 
     #[inline(always)]
-    fn sub(self, other: GF255<MQ>) -> GF255<MQ> {
+    fn sub(self, other: GFp256) -> GFp256 {
         let mut r = self;
         r.set_sub(&other);
         r
     }
 }
 
-impl<const MQ: u64> Sub<&GF255<MQ>> for GF255<MQ> {
-    type Output = GF255<MQ>;
+impl Sub<&GFp256> for GFp256 {
+    type Output = GFp256;
 
     #[inline(always)]
-    fn sub(self, other: &GF255<MQ>) -> GF255<MQ> {
+    fn sub(self, other: &GFp256) -> GFp256 {
         let mut r = self;
         r.set_sub(other);
         r
     }
 }
 
-impl<const MQ: u64> Sub<GF255<MQ>> for &GF255<MQ> {
-    type Output = GF255<MQ>;
+impl Sub<GFp256> for &GFp256 {
+    type Output = GFp256;
 
     #[inline(always)]
-    fn sub(self, other: GF255<MQ>) -> GF255<MQ> {
+    fn sub(self, other: GFp256) -> GFp256 {
         let mut r = *self;
         r.set_sub(&other);
         r
     }
 }
 
-impl<const MQ: u64> Sub<&GF255<MQ>> for &GF255<MQ> {
-    type Output = GF255<MQ>;
+impl Sub<&GFp256> for &GFp256 {
+    type Output = GFp256;
 
     #[inline(always)]
-    fn sub(self, other: &GF255<MQ>) -> GF255<MQ> {
+    fn sub(self, other: &GFp256) -> GFp256 {
         let mut r = *self;
         r.set_sub(other);
         r
     }
 }
 
-impl<const MQ: u64> SubAssign<GF255<MQ>> for GF255<MQ> {
+impl SubAssign<GFp256> for GFp256 {
     #[inline(always)]
-    fn sub_assign(&mut self, other: GF255<MQ>) {
+    fn sub_assign(&mut self, other: GFp256) {
         self.set_sub(&other);
     }
 }
 
-impl<const MQ: u64> SubAssign<&GF255<MQ>> for GF255<MQ> {
+impl SubAssign<&GFp256> for GFp256 {
     #[inline(always)]
-    fn sub_assign(&mut self, other: &GF255<MQ>) {
+    fn sub_assign(&mut self, other: &GFp256) {
         self.set_sub(other);
     }
 }
@@ -1948,29 +1768,28 @@ impl<const MQ: u64> SubAssign<&GF255<MQ>> for GF255<MQ> {
 #[cfg(test)]
 mod tests {
 
-    use super::{GF255};
+    use super::{GFp256};
     use num_bigint::{BigInt, Sign};
     use sha2::{Sha256, Digest};
 
-    /* unused
-    fn print<const MQ: u64>(name: &str, v: GF255<MQ>) {
+    /*
+    fn print(name: &str, v: GFp256) {
         println!("{} = 0x{:016X}{:016X}{:016X}{:016X}",
             name, v.0[3], v.0[2], v.0[1], v.0[0]);
     }
     */
 
     // va, vb and vx must be 32 bytes each in length
-    fn check_gf_ops<const MQ: u64>(va: &[u8], vb: &[u8], vx: &[u8]) {
+    fn check_gf_ops(va: &[u8], vb: &[u8], vx: &[u8]) {
         let zp = BigInt::from_slice(Sign::Plus, &[
-            (MQ as u32).wrapping_neg(),
-            0xFFFFFFFFu32, 0xFFFFFFFFu32, 0xFFFFFFFFu32,
-            0xFFFFFFFFu32, 0xFFFFFFFFu32, 0xFFFFFFFFu32, 0x7FFFFFFFu32,
+            0xFFFFFFFFu32, 0xFFFFFFFFu32, 0xFFFFFFFFu32, 0x00000000u32,
+            0x00000000u32, 0x00000000u32, 0x00000001u32, 0xFFFFFFFFu32,
         ]);
         let zp4 = &zp << 2;
 
-        let mut a = GF255::<MQ>::ZERO;
+        let mut a = GFp256::ZERO;
         a.set_decode32_reduce(va);
-        let mut b = GF255::<MQ>::ZERO;
+        let mut b = GFp256::ZERO;
         b.set_decode32_reduce(vb);
         let za = BigInt::from_bytes_le(Sign::Plus, va);
         let zb = BigInt::from_bytes_le(Sign::Plus, vb);
@@ -2016,6 +1835,12 @@ mod tests {
         let zd = (&za << 1) % &zp;
         assert!(zc == zd);
 
+        let c = a.mul3();
+        let vc = c.encode32();
+        let zc = BigInt::from_bytes_le(Sign::Plus, &vc);
+        let zd = (&za + (&za << 1)) % &zp;
+        assert!(zc == zd);
+
         let c = a.mul4();
         let vc = c.encode32();
         let zc = BigInt::from_bytes_le(Sign::Plus, &vc);
@@ -2053,7 +1878,7 @@ mod tests {
         let zd = (&za * &za) % &zp;
         assert!(zc == zd);
 
-        let (e, cc) = GF255::<MQ>::decode32(va);
+        let (e, cc) = GFp256::decode32(va);
         if cc != 0 {
             assert!(cc == 0xFFFFFFFF);
             assert!(e.encode32() == va);
@@ -2066,7 +1891,7 @@ mod tests {
         tmp[32..64].copy_from_slice(vb);
         tmp[64..96].copy_from_slice(vx);
         for k in 0..97 {
-            let c = GF255::<MQ>::decode_reduce(&tmp[0..k]);
+            let c = GFp256::decode_reduce(&tmp[0..k]);
             let vc = c.encode32();
             let zc = BigInt::from_bytes_le(Sign::Plus, &vc);
             let zd = BigInt::from_bytes_le(Sign::Plus, &tmp[0..k]) % &zp;
@@ -2082,31 +1907,28 @@ mod tests {
         }
     }
 
-    fn test_gf<const MQ: u64>(nqr: u32) {
+    #[test]
+    fn gfp256_ops() {
         let mut va = [0u8; 32];
         let mut vb = [0u8; 32];
         let mut vx = [0u8; 32];
-        check_gf_ops::<MQ>(&va, &vb, &vx);
-        assert!(GF255::<MQ>::decode_reduce(&va).iszero() == 0xFFFFFFFF);
-        assert!(GF255::<MQ>::decode_reduce(&va).equals(GF255::<MQ>::decode_reduce(&vb)) == 0xFFFFFFFF);
-        assert!(GF255::<MQ>::decode_reduce(&va).legendre() == 0);
+        check_gf_ops(&va, &vb, &vx);
+        assert!(GFp256::decode_reduce(&va).iszero() == 0xFFFFFFFF);
+        assert!(GFp256::decode_reduce(&va).equals(GFp256::decode_reduce(&vb)) == 0xFFFFFFFF);
+        assert!(GFp256::decode_reduce(&va).legendre() == 0);
         for i in 0..32 {
             va[i] = 0xFFu8;
             vb[i] = 0xFFu8;
             vx[i] = 0xFFu8;
         }
-        check_gf_ops::<MQ>(&va, &vb, &vx);
-        assert!(GF255::<MQ>::decode_reduce(&va).iszero() == 0);
-        assert!(GF255::<MQ>::decode_reduce(&va).equals(GF255::<MQ>::decode_reduce(&vb)) == 0xFFFFFFFF);
-        va[0..8].copy_from_slice(&MQ.wrapping_neg().to_le_bytes());
-        va[31] = 0x7F;
-        assert!(GF255::<MQ>::decode_reduce(&va).iszero() == 0xFFFFFFFF);
-        va[0..8].copy_from_slice(&(2 * MQ).wrapping_neg().to_le_bytes());
-        va[31] = 0xFF;
-        assert!(GF255::<MQ>::decode_reduce(&va).iszero() == 0xFFFFFFFF);
+        check_gf_ops(&va, &vb, &vx);
+        assert!(GFp256::decode_reduce(&va).iszero() == 0);
+        assert!(GFp256::decode_reduce(&va).equals(GFp256::decode_reduce(&vb)) == 0xFFFFFFFF);
+        for i in 0..4 {
+            va[8*i..8*i + 8].copy_from_slice(&GFp256::MODULUS[i].to_le_bytes());
+        }
+        assert!(GFp256::decode_reduce(&va).iszero() == 0xFFFFFFFF);
         let mut sh = Sha256::new();
-        let tt = GF255::<MQ>::w64le(0, 0, 1, 0);
-        let corr128 = [ -tt, GF255::<MQ>::ZERO, tt ];
         for i in 0..300 {
             sh.update(((3 * i + 0) as u64).to_le_bytes());
             let va = sh.finalize_reset();
@@ -2114,11 +1936,11 @@ mod tests {
             let vb = sh.finalize_reset();
             sh.update(((3 * i + 2) as u64).to_le_bytes());
             let vx = sh.finalize_reset();
-            check_gf_ops::<MQ>(&va, &vb, &vx);
-            assert!(GF255::<MQ>::decode_reduce(&va).iszero() == 0);
-            assert!(GF255::<MQ>::decode_reduce(&va).equals(GF255::<MQ>::decode_reduce(&vb)) == 0);
-            let s = GF255::<MQ>::decode_reduce(&va).square();
-            let s2 = s.mul_small(nqr);
+            check_gf_ops(&va, &vb, &vx);
+            assert!(GFp256::decode_reduce(&va).iszero() == 0);
+            assert!(GFp256::decode_reduce(&va).equals(GFp256::decode_reduce(&vb)) == 0);
+            let s = GFp256::decode_reduce(&va).square();
+            let s2 = -s;
             assert!(s.legendre() == 1);
             assert!(s2.legendre() == -1);
             let (t, r) = s.sqrt();
@@ -2134,68 +1956,27 @@ mod tests {
             assert!(t2.iszero() == 0xFFFFFFFF);
             let (t2, r) = s2.sqrt_ext();
             assert!(r == 0);
-            if (MQ & 3) == 1 {
-                // q = 3 mod 4, we are supposed to get a square root of -s2
-                assert!(t2.square().equals(-s2) == 0xFFFFFFFF);
-            } else if (MQ & 7) == 3 {
-                // q = 5 mod 8, we are supposed to get a square root of
-                // 2*s2 or -2*s2
-                let y = t2.square();
-                let z = s2.mul2();
-                assert!((y.equals(z) | y.equals(-z)) == 0xFFFFFFFF);
-            } else {
-                unimplemented!();
-            }
-
-            let a = GF255::<MQ>::decode_reduce(&va);
-            let (c0, c1) = a.split_vartime();
-            let b0 = GF255::<MQ>::from_i128(c0);
-            let b1 = GF255::<MQ>::from_i128(c1);
-            let mut ok = false;
-            for k1 in 0..3 {
-                let ah = a * (b1 + corr128[k1]);
-                for k0 in 0..3 {
-                    if ah.equals(b0 + corr128[k0]) == 0xFFFFFFFF {
-                        ok = true;
-                    }
-                }
-            }
-            assert!(ok);
+            assert!(t2.square().equals(-s2) == 0xFFFFFFFF);
         }
     }
 
     #[test]
-    fn gf255e_ops() {
-        test_gf::<18651>(2);
-    }
-
-    #[test]
-    fn gf255s_ops() {
-        test_gf::<3957>(2);
-    }
-
-    #[test]
-    fn gf25519_ops() {
-        test_gf::<19>(2);
-    }
-
-    #[test]
-    fn gf25519_batch_invert() {
-        let mut xx = [GF255::<19>::ZERO; 300];
+    fn gfp256_batch_invert() {
+        let mut xx = [GFp256::ZERO; 300];
         let mut sh = Sha256::new();
         for i in 0..300 {
             sh.update((i as u64).to_le_bytes());
             let v = sh.finalize_reset();
-            xx[i] = GF255::<19>::decode_reduce(&v);
+            xx[i] = GFp256::decode_reduce(&v);
         }
-        xx[120] = GF255::<19>::ZERO;
+        xx[120] = GFp256::ZERO;
         let mut yy = xx;
-        GF255::<19>::batch_invert(&mut yy[..]);
+        GFp256::batch_invert(&mut yy[..]);
         for i in 0..300 {
             if xx[i].iszero() != 0 {
                 assert!(yy[i].iszero() == 0xFFFFFFFF);
             } else {
-                assert!((xx[i] * yy[i]).equals(GF255::<19>::ONE) == 0xFFFFFFFF);
+                assert!((xx[i] * yy[i]).equals(GFp256::ONE) == 0xFFFFFFFF);
             }
         }
     }

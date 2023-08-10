@@ -173,6 +173,12 @@
 )))]
 compile_error!("no backend specified; cannot infer from pointer size");
 
+#[cfg(all(
+    feature = "w32_backend",
+    feature = "w64_backend",
+))]
+compile_error!("cannot use w32 and w64 backends simultaneously");
+
 #[cfg(any(
     feature = "w32_backend",
     all(not(feature = "w64_backend"), target_pointer_width = "32"),
@@ -186,11 +192,46 @@ pub mod w32;
 /// and `set_mul_small()`. Square root computations are possible
 /// if the modulus is equal to 3, 5 or 7 modulo 8, but not if the
 /// modulus is equal to 1 modulo 8 (this would trigger a panic).
-#[cfg(any(
-    feature = "w32_backend",
-    all(not(feature = "w64_backend"), target_pointer_width = "32"),
+#[cfg(all(
+    any(
+        feature = "w32_backend",
+        all(not(feature = "w64_backend"), target_pointer_width = "32")),
+    feature = "gf255",
 ))]
-pub type GF255<const MQ: u64> = w32::gf255::GF255<MQ>;
+pub use w32::GF255;
+
+/// Finite field: integers modulo 2^255 - 19.
+///
+/// This type implements `mul_small()` and `set_mul_small()`.
+#[cfg(all(
+    any(
+        feature = "w32_backend",
+        all(not(feature = "w64_backend"), target_pointer_width = "32")),
+    feature = "gf25519",
+))]
+pub use w32::GF25519;
+
+/// Finite field: integers modulo 2^255 - 18651.
+///
+/// This type implements `mul_small()` and `set_mul_small()`.
+#[cfg(all(
+    any(
+        feature = "w32_backend",
+        all(not(feature = "w64_backend"), target_pointer_width = "32")),
+    feature = "gf255e",
+))]
+pub use w32::GF255e;
+
+/// Finite field: integers modulo 2^255 - 3957.
+///
+/// This type implements `mul_small()` and `set_mul_small()`.
+#[cfg(all(
+    any(
+        feature = "w32_backend",
+        all(not(feature = "w64_backend"), target_pointer_width = "32")),
+    feature = "gf255s",
+))]
+pub use w32::GF255s;
 
 /// Finite field: generic 256-bit modulus.
 ///
@@ -217,39 +258,62 @@ pub type GF255<const MQ: u64> = w32::gf255::GF255<MQ>;
 /// The internal implementation strategy uses Montgomery multiplication.
 /// Some moduli yield better performance, especially moduli that contain
 /// limbs of value 0, and moduli such that `M0` is 0xFFFFFFFFFFFFFFFF.
-#[cfg(any(
-    feature = "w32_backend",
-    all(not(feature = "w64_backend"), target_pointer_width = "32"),
+#[cfg(all(
+    any(
+        feature = "w32_backend",
+        all(not(feature = "w64_backend"), target_pointer_width = "32")),
+    feature = "modint256",
 ))]
-pub type ModInt256<const M0: u64, const M1: u64, const M2: u64, const M3: u64> =
-    w32::modint::ModInt256<M0, M1, M2, M3>;
+pub use w32::modint::ModInt256;
 
 /// Finite field: integers modulo 2^256 - 2^32 - 977.
 ///
 /// This is a dedicated type for the base field used by curve secp256k1.
-#[cfg(any(
-    feature = "w32_backend",
-    all(not(feature = "w64_backend"), target_pointer_width = "32"),
+#[cfg(all(
+    any(
+        feature = "w32_backend",
+        all(not(feature = "w64_backend"), target_pointer_width = "32")),
+    feature = "gfsecp256k1",
 ))]
-pub type GFsecp256k1 = w32::gfsecp256k1::GFsecp256k1;
+pub use w32::GFsecp256k1;
 
-#[cfg(any(
-    feature = "w32_backend",
-    all(not(feature = "w64_backend"), target_pointer_width = "32"),
+/// Finite field: integers modulo 2^256 - 2^224 + 2^192 + 2^96 - 1.
+///
+/// This is a dedicated type for the base field used by curve P-256.
+#[cfg(all(
+    any(
+        feature = "w32_backend",
+        all(not(feature = "w64_backend"), target_pointer_width = "32")),
+    feature = "gfp256",
 ))]
-pub type GF448 = w32::gf448::GF448;
+pub use w32::GFp256;
+
+/// Finite field: integers modulo 2^448 - 2^224 - 1.
+///
+/// This is a dedicated type for the base field used by curve Curve448.
+#[cfg(all(
+    any(
+        feature = "w32_backend",
+        all(not(feature = "w64_backend"), target_pointer_width = "32")),
+    feature = "gf448",
+))]
+pub use w32::GF448;
 
 /// Finite field generic implementation: support macro.
-#[cfg(any(
-    feature = "w32_backend",
-    all(not(feature = "w64_backend"), target_pointer_width = "32"),
+#[cfg(all(
+    any(
+        feature = "w32_backend",
+        all(not(feature = "w64_backend"), target_pointer_width = "32")),
+    feature = "gfgen",
 ))]
 pub use w32::gfgen::define_gfgen;
 
 /// Finite field generic implementation: support macro (tests).
-#[cfg(any(
-    feature = "w32_backend",
-    all(not(feature = "w64_backend"), target_pointer_width = "32"),
+#[cfg(all(
+    any(
+        feature = "w32_backend",
+        all(not(feature = "w64_backend"), target_pointer_width = "32")),
+    feature = "gfgen",
 ))]
 pub use w32::gfgen::define_gfgen_tests;
 
@@ -266,11 +330,46 @@ pub mod w64;
 /// and `set_mul_small()`. Square root computations are possible
 /// if the modulus is equal to 3, 5 or 7 modulo 8, but not if the
 /// modulus is equal to 1 modulo 8 (this would trigger a panic).
-#[cfg(any(
-    feature = "w64_backend",
-    all(not(feature = "w32_backend"), target_pointer_width = "64"),
+#[cfg(all(
+    any(
+        feature = "w64_backend",
+        all(not(feature = "w32_backend"), target_pointer_width = "64")),
+    feature = "gf255",
 ))]
-pub type GF255<const MQ: u64> = w64::gf255::GF255<MQ>;
+pub use w64::GF255;
+
+/// Finite field: integers modulo 2^255 - 19.
+///
+/// This type implements `mul_small()` and `set_mul_small()`.
+#[cfg(all(
+    any(
+        feature = "w64_backend",
+        all(not(feature = "w32_backend"), target_pointer_width = "64")),
+    feature = "gf25519",
+))]
+pub use w64::GF25519;
+
+/// Finite field: integers modulo 2^255 - 18651.
+///
+/// This type implements `mul_small()` and `set_mul_small()`.
+#[cfg(all(
+    any(
+        feature = "w64_backend",
+        all(not(feature = "w32_backend"), target_pointer_width = "64")),
+    feature = "gf255e",
+))]
+pub use w64::GF255e;
+
+/// Finite field: integers modulo 2^255 - 3957.
+///
+/// This type implements `mul_small()` and `set_mul_small()`.
+#[cfg(all(
+    any(
+        feature = "w64_backend",
+        all(not(feature = "w32_backend"), target_pointer_width = "64")),
+    feature = "gf255s",
+))]
+pub use w64::GF255s;
 
 /// Finite field: generic 256-bit modulus.
 ///
@@ -293,41 +392,61 @@ pub type GF255<const MQ: u64> = w64::gf255::GF255<MQ>;
 /// The internal implementation strategy uses Montgomery multiplication.
 /// Some moduli yield better performance, especially moduli that contains
 /// limbs of value 0, and moduli such that `M0` is 0xFFFFFFFFFFFFFFFF.
-#[cfg(any(
-    feature = "w64_backend",
-    all(not(feature = "w32_backend"), target_pointer_width = "64"),
+#[cfg(all(
+    any(
+        feature = "w64_backend",
+        all(not(feature = "w32_backend"), target_pointer_width = "64")),
+    feature = "modint256",
 ))]
-pub type ModInt256<const M0: u64, const M1: u64, const M2: u64, const M3: u64> =
-    w64::modint::ModInt256<M0, M1, M2, M3>;
+pub use w64::modint::ModInt256;
 
 /// Finite field: integers modulo 2^256 - 2^32 - 977.
 ///
 /// This is a dedicated type for the base field used by curve secp256k1.
-#[cfg(any(
-    feature = "w64_backend",
-    all(not(feature = "w32_backend"), target_pointer_width = "64"),
+#[cfg(all(
+    any(
+        feature = "w64_backend",
+        all(not(feature = "w32_backend"), target_pointer_width = "64")),
+    feature = "gfsecp256k1",
 ))]
-pub type GFsecp256k1 = w64::gfsecp256k1::GFsecp256k1;
+pub use w64::GFsecp256k1;
+
+/// Finite field: integers modulo 2^256 - 2^224 + 2^192 + 2^96 - 1.
+///
+/// This is a dedicated type for the base field used by curve P-256.
+#[cfg(all(
+    any(
+        feature = "w64_backend",
+        all(not(feature = "w32_backend"), target_pointer_width = "64")),
+    feature = "gfp256",
+))]
+pub use w64::GFp256;
 
 /// Finite field: integers modulo 2^448 - 2^224 - 1.
 ///
 /// This is a dedicated type for the base field used by curve Curve448.
-#[cfg(any(
-    feature = "w64_backend",
-    all(not(feature = "w32_backend"), target_pointer_width = "64"),
+#[cfg(all(
+    any(
+        feature = "w64_backend",
+        all(not(feature = "w32_backend"), target_pointer_width = "64")),
+    feature = "gf448",
 ))]
-pub type GF448 = w64::gf448::GF448;
+pub use w64::GF448;
 
 /// Finite field generic implementation: support macro.
-#[cfg(any(
-    feature = "w64_backend",
-    all(not(feature = "w32_backend"), target_pointer_width = "64"),
+#[cfg(all(
+    any(
+        feature = "w64_backend",
+        all(not(feature = "w32_backend"), target_pointer_width = "64")),
+    feature = "gfgen",
 ))]
 pub use w64::gfgen::define_gfgen;
 
 /// Finite field generic implementation: support macro (tests).
-#[cfg(any(
-    feature = "w64_backend",
-    all(not(feature = "w32_backend"), target_pointer_width = "64"),
+#[cfg(all(
+    any(
+        feature = "w64_backend",
+        all(not(feature = "w32_backend"), target_pointer_width = "64")),
+    feature = "gfgen",
 ))]
 pub use w64::gfgen::define_gfgen_tests;

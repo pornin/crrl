@@ -1,6 +1,6 @@
 [package]
 name = "crrl"
-version = "0.5.0"
+version = "0.6.0"
 authors = ["Thomas Pornin <thomas.pornin@nccgroup.com>"]
 edition = "2018"
 license = "MIT"
@@ -34,73 +34,116 @@ num-bigint = "0.4.3"
 # Default feature 'std' enables uses of heap allocation, which is used by
 # some functions. By disabling it, a core-only library can be obtained.
 [features]
-default = ["std"]
-std = ["alloc"]
+default = [ "std", "omnes" ]
+std = [ "alloc" ]
 alloc = []
 w32_backend = []
 w64_backend = []
+gf255_m51 = []
+gf255_m64 = []
+omnes = [ "decaf448", "ed25519", "ed448", "frost", "jq255e", "jq255s", "lms", "p256", "ristretto255", "secp256k1", "x25519", "x448", "modint256", "gf255", "gfgen" ]
+decaf448 = [ "ed448" ]
+ed25519 = [ "gf25519", "modint256" ]
+ed448 = [ "gf448", "gfgen" ]
+frost = [ "alloc" ]
+jq255e = [ "gf255e", "modint256" ]
+jq255s = [ "gf255s", "modint256" ]
+lms = []
+p256 = [ "gfp256", "modint256" ]
+ristretto255 = [ "ed25519" ]
+secp256k1 = [ "gfsecp256k1", "modint256" ]
+x25519 = [ "ed25519" ]
+x448 = [ "ed448" ]
+gfgen = []
+gf255 = []
+gf255e = []
+gf255s = []
+gf25519 = []
+gfp256 = []
+gfsecp256k1 = []
+gf448 = []
+modint256 = []
 
 [[bench]]
 name = "modint"
 path = "benches/modint.rs"
 harness = false
+required-features = [ "modint256" ]
 
 [[bench]]
-name = "gf255"
-path = "benches/gf255.rs"
+name = "gf255e"
+path = "benches/gf255e.rs"
 harness = false
+required-features = [ "gf255e" ]
+
+[[bench]]
+name = "gf25519"
+path = "benches/gf25519.rs"
+harness = false
+required-features = [ "gf25519" ]
 
 [[bench]]
 name = "ed25519"
 path = "benches/ed25519.rs"
 harness = false
+required-features = [ "ed25519" ]
 
 [[bench]]
 name = "x25519"
 path = "benches/x25519.rs"
 harness = false
+required-features = [ "x25519" ]
 
 [[bench]]
 name = "p256"
 path = "benches/p256.rs"
 harness = false
+required-features = [ "p256" ]
 
 [[bench]]
 name = "ristretto255"
 path = "benches/ristretto255.rs"
 harness = false
+required-features = [ "ristretto255" ]
 
 [[bench]]
 name = "jq255e"
 path = "benches/jq255e.rs"
 harness = false
+required-features = [ "jq255e" ]
 
 [[bench]]
 name = "jq255s"
 path = "benches/jq255s.rs"
 harness = false
+required-features = [ "jq255s" ]
 
 [[bench]]
 name = "secp256k1"
 path = "benches/secp256k1.rs"
 harness = false
+required-features = [ "secp256k1" ]
 
 [[bench]]
 name = "gf448"
 path = "benches/gf448.rs"
 harness = false
+required-features = [ "gf448" ]
 
 [[bench]]
 name = "sc448"
 path = "benches/sc448.rs"
 harness = false
+required-features = [ "ed448" ]
 
 [[bench]]
 name = "ed448"
 path = "benches/ed448.rs"
 harness = false
+required-features = [ "ed448" ]
 
 [[bench]]
 name = "x448"
 path = "benches/x448.rs"
 harness = false
+required-features = [ "x448" ]

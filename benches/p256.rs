@@ -1,4 +1,5 @@
 #![allow(non_snake_case)]
+#![cfg(feature = "p256")]
 
 mod util;
 use util::core_cycles;

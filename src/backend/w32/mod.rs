@@ -1,8 +1,62 @@
+#[cfg(any(
+    feature = "gf255",
+    feature = "gf255e",
+    feature = "gf255s",
+    feature = "gf25519",
+))]
 pub mod gf255;
+
+#[cfg(any(
+    feature = "gf255",
+    feature = "gf255e",
+    feature = "gf255s",
+    feature = "gf25519",
+))]
+pub use gf255::GF255;
+
+#[cfg(feature = "gf255e")]
+pub type GF255e = GF255<18651>;
+
+#[cfg(feature = "gf255s")]
+pub type GF255s = GF255<3957>;
+
+#[cfg(feature = "gf25519")]
+pub type GF25519 = GF255<19>;
+
+#[cfg(any(
+    feature = "modint256",
+    feature = "gfp256",
+))]
 pub mod modint;
+
+#[cfg(feature = "gfp256")]
+pub type GFp256 = modint::ModInt256<
+    0xFFFFFFFFFFFFFFFF, 0x00000000FFFFFFFF,
+    0x0000000000000000, 0xFFFFFFFF00000001>;
+
+#[cfg(feature = "gfp256")]
+impl GFp256 {
+    /// Encodes a scalar element into bytes (little-endian).
+    pub fn encode(self) -> [u8; 32] {
+        self.encode32()
+    }
+}
+
+#[cfg(feature = "secp256k1")]
 pub mod gfsecp256k1;
+
+#[cfg(feature = "secp256k1")]
+pub use gfsecp256k1::GFsecp256k1;
+
+#[cfg(feature = "gf448")]
 pub mod gf448;
+
+#[cfg(feature = "gf448")]
+pub use gf448::GF448;
+
 pub mod lagrange;
+
+#[cfg(feature = "gfgen")]
 pub mod gfgen;
 
 // Carrying addition and subtraction should use u32::carrying_add()
@@ -13,6 +67,7 @@ pub mod gfgen;
 // (x, y, c_in) -> x + y + c_in mod 2^32, c_out
 
 #[cfg(target_arch = "x86")]
+#[allow(dead_code)]
 #[inline(always)]
 pub(crate) fn addcarry_u32(x: u32, y: u32, c: u8) -> (u32, u8) {
     use core::arch::x86::_addcarry_u32;
@@ -24,6 +79,7 @@ pub(crate) fn addcarry_u32(x: u32, y: u32, c: u8) -> (u32, u8) {
 }
 
 #[cfg(not(target_arch = "x86"))]
+#[allow(dead_code)]
 #[inline(always)]
 pub(crate) const fn addcarry_u32(x: u32, y: u32, c: u8) -> (u32, u8) {
     let z = (x as u64).wrapping_add(y as u64).wrapping_add(c as u64);
@@ -34,6 +90,7 @@ pub(crate) const fn addcarry_u32(x: u32, y: u32, c: u8) -> (u32, u8) {
 // (x, y, c_in) -> x - y - c_in mod 2^32, c_out
 
 #[cfg(target_arch = "x86")]
+#[allow(dead_code)]
 #[inline(always)]
 pub(crate) fn subborrow_u32(x: u32, y: u32, c: u8) -> (u32, u8) {
     use core::arch::x86::_subborrow_u32;
@@ -45,6 +102,7 @@ pub(crate) fn subborrow_u32(x: u32, y: u32, c: u8) -> (u32, u8) {
 }
 
 #[cfg(not(target_arch = "x86"))]
+#[allow(dead_code)]
 #[inline(always)]
 pub(crate) const fn subborrow_u32(x: u32, y: u32, c: u8) -> (u32, u8) {
     let z = (x as u64).wrapping_sub(y as u64).wrapping_sub(c as u64);
@@ -52,6 +110,7 @@ pub(crate) const fn subborrow_u32(x: u32, y: u32, c: u8) -> (u32, u8) {
 }
 
 // Compute x*y over 64 bits, returned as two 32-bit words (lo, hi)
+#[allow(dead_code)]
 #[inline(always)]
 pub(crate) const fn umull(x: u32, y: u32) -> (u32, u32) {
     let z = (x as u64) * (y as u64);
@@ -59,6 +118,7 @@ pub(crate) const fn umull(x: u32, y: u32) -> (u32, u32) {
 }
 
 // Compute x*y+z over 64 bits, returned as two 32-bit words (lo, hi)
+#[allow(dead_code)]
 #[inline(always)]
 pub(crate) const fn umull_add(x: u32, y: u32, z: u32) -> (u32, u32) {
     let t = ((x as u64) * (y as u64)).wrapping_add(z as u64);
@@ -66,6 +126,7 @@ pub(crate) const fn umull_add(x: u32, y: u32, z: u32) -> (u32, u32) {
 }
 
 // Compute x*y+z1+z2 over 64 bits, returned as two 32-bit words (lo, hi)
+#[allow(dead_code)]
 #[inline(always)]
 pub(crate) const fn umull_add2(x: u32, y: u32, z1: u32, z2: u32) -> (u32, u32) {
     let t = ((x as u64) * (y as u64))
@@ -74,6 +135,7 @@ pub(crate) const fn umull_add2(x: u32, y: u32, z1: u32, z2: u32) -> (u32, u32) {
 }
 
 // Compute x1*y1+x2*y2 over 64 bits, returned as two 32-bit words (lo, hi)
+#[allow(dead_code)]
 #[inline(always)]
 pub(crate) const fn umull_x2(x1: u32, y1: u32, x2: u32, y2: u32) -> (u32, u32) {
     let z1 = (x1 as u64) * (y1 as u64);
@@ -83,6 +145,7 @@ pub(crate) const fn umull_x2(x1: u32, y1: u32, x2: u32, y2: u32) -> (u32, u32) {
 }
 
 // Compute x1*y1+x2*y2+z3 over 64 bits, returned as two 32-bit words (lo, hi)
+#[allow(dead_code)]
 #[inline(always)]
 pub(crate) const fn umull_x2_add(x1: u32, y1: u32, x2: u32, y2: u32, z3: u32) -> (u32, u32) {
     let z1 = (x1 as u64) * (y1 as u64);
@@ -93,6 +156,7 @@ pub(crate) const fn umull_x2_add(x1: u32, y1: u32, x2: u32, y2: u32, z3: u32) ->
 
 // Return 0xFFFFFFFF if x >= 0x80000000, 0 otherwise (i.e. take the sign
 // bit of the signed interpretation, and expand it to 32 bits).
+#[allow(dead_code)]
 #[inline(always)]
 pub(crate) const fn sgnw(x: u32) -> u32 {
     ((x as i32) >> 31) as u32
@@ -112,6 +176,7 @@ pub(crate) const fn sgnw(x: u32) -> u32 {
 #[cfg(any(
     all(target_arch = "x86", target_feature = "lzcnt"),
     ))]
+#[allow(dead_code)]
 #[inline(always)]
 pub(crate) const fn lzcnt(x: u32) -> u32 {
     x.leading_zeros()
@@ -120,6 +185,7 @@ pub(crate) const fn lzcnt(x: u32) -> u32 {
 #[cfg(not(any(
     all(target_arch = "x86", target_feature = "lzcnt"),
     )))]
+#[allow(dead_code)]
 pub(crate) const fn lzcnt(x: u32) -> u32 {
     let m = sgnw((x >> 16).wrapping_sub(1));
     let s = m & 16;

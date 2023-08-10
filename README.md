@@ -70,30 +70,34 @@ are implemented:
     leveraged to speed-up point multiplication (key exchange) and
     signature verification.
 
-  - Types `jq255e::Point` and `jq255s::Point` implement the [double-odd
-    curves](https://doubleodd.group/) jq255e and jq255s (along with the
-    corresponding scalar types `jq255e::Scalar` and `jq255s::Scalar`).
-    Key exchange and Schnorr signatures are implemented. These curves
-    provide a prime-order group abstraction, similar to ristretto255,
-    but with somewhat better performance at the same security level.
-    Moreover, the relevant signatures are both shorter (48 bytes instead
-    of 64) and faster than the usual Ed25519 signatures.
+  - Types `jq255e::Point` and `jq255s::Point` implement the
+    [double-odd curves](https://doubleodd.group/) jq255e and jq255s
+    (along with the corresponding scalar types `jq255e::Scalar` and
+    `jq255s::Scalar`). Key exchange and Schnorr signatures are
+    implemented. These curves provide a prime-order group abstraction,
+    similar to ristretto255, but with somewhat better performance at the
+    same security level. Moreover, the relevant signatures are both
+    shorter (48 bytes instead of 64) and faster than the usual Ed25519
+    signatures.
 
-  - Function `x25519::x25519()` implements the [X25519 function](https://datatracker.ietf.org/doc/html/rfc7748#section-5).
+  - Function `x25519::x25519()` implements the
+    [X25519 function](https://datatracker.ietf.org/doc/html/rfc7748#section-5).
     An optimized `x25519::x2559_base()` function is provided when X25519
     is applied to the conventional base point. Similarly, `x448::x448()`
     and `x448::x448_base()` provide the same functionality for the
     X448 function.
 
 Types `GF255` and `ModInt256` have a 32-bit and a 64-bit implementations
-each. The code is portable (it was tested on 32-bit and 64-bit x86, and
-64-bit aarch64). Performance is quite decent; e.g. Ed25519 signatures
-are computed in about 51500 cycles, and verified in about 114000 cycles,
-on an Intel "Coffee Lake" CPU; this is not too far from the best
-assembly-optimized implementations. At the same time, use of operator
-overloading allows to express formulas on points and scalar with about
-the same syntax as their mathematical description. For instance, the
-core of the X25519 implementation looks like this:
+each (actually two 64-bit implementations, see later the discussion
+about the `gf255_m51` feature). The code is portable (it was tested on
+32-bit and 64-bit x86, 64-bit aarch64, and 64-bit riscv64). Performance
+is quite decent; e.g. Ed25519 signatures are computed in about 51500
+cycles, and verified in about 114000 cycles, on an Intel "Coffee Lake"
+CPU; this is not too far from the best assembly-optimized
+implementations. At the same time, use of operator overloading allows to
+express formulas on points and scalar with about the same syntax as
+their mathematical description. For instance, the core of the X25519
+implementation looks like this:
 
 ```
         let A = x2 + z2;
@@ -128,6 +132,70 @@ which is quite close to the corresponding description in RFC 7748:
        x_2 = AA * BB
        z_2 = E * (AA + a24 * E)
 ```
+
+# Optional Features
+
+By default, everything in crrl is compiled, which unfortunately makes for
+a relatively long compilation time, especially on not-so-fast systems.
+To only compile support for some primitives, use `--no-default-features`
+then add selectively the features you are interested in with `-F`; e.g.
+use `cargo build --no-default-features -F ed25519` to only compile the
+Ed25519 support (and the primitives that it needs, such as its base
+field). The defined primitive-controlling features are the following:
+
+  - `omnes`: enables all of the following.
+
+  - `decaf448`: decaf448 prime-order group (based on edwards448)
+
+  - `ed25519`: edwards25519 curve and signatures (RFC 8032: Ed25519)
+
+  - `ed448`: edwards448 curve and signatures (RFC 8032: Ed448)
+  
+  - `frost`: FROST threshold signatures (support macros + standard
+    ciphersuites, but only for the curves which are also enabled in
+    this build)
+
+  - `jq255e`: jq255e prime-order group and signatures
+
+  - `jq255s`: jq255s prime-order group and signatures
+
+  - `lms`: LMS support (hash-based signatures)
+
+  - `p256`: NIST P-256 curve and signatures (ECDSA)
+
+  - `ristretto255`: ristretto255 prime-order group (based on edwards25519)
+
+  - `secp256k1`: secp256k1 curve and signatures (ECDSA)
+
+  - `x25519`: X25519 key exchange primitive (RFC 7748)
+
+  - `x448`: X448 key exchange primitive (RFC 7748)
+
+  - `modint256`: generic finite field implementation (prime order of up to
+    256 bits)
+
+  - `gf255`: generic finite field implementation (for prime order
+    `q = 2^255 - MQ` with `MQ < 2^15`)
+
+  - `gfgen`: generic finite field implementation (generating macro; prime
+    modulus of arbitrary length)
+
+Some operations have multiple backends. An appropriate backend is selected
+at compile-time, but this can be overridden by enabling some features:
+
+  - `w32_backend`: enforce use of the 32-bit code, even on 64-bit systems.
+
+  - `w64_backend`: enforce use of the 64-bit code, even on 32-bit systems.
+
+  - `gf255_m64`: enforce use of 64-bit limbs for `GF255<MQ>`; this is the
+    default on 64-bit machines, except RISC-V (riscv64) where 51-bit
+    limbs are used by default. This feature has no effect if the 32-bit code
+    is used.
+
+  - `gf255_m51`: encode use of 51-bit limbs for `GF255<MQ>`; this is the
+    default on 64-bit RISC-V targets (riscv64), but not on other 64-bit
+    architectures where 64-bit limbs are normally preferred. This feature
+    has no effect if the 32-bit code is used.
 
 # Security and Compliance
 

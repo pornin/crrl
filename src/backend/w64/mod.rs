@@ -1,8 +1,121 @@
-pub mod gf255;
+// Module gf255 defines the generic GF255<MQ> type, with 64-bit limbs.
+// It is used for GF255e and GF255s. For GF25519, an alternate implementation
+// with 51-bit limbs is provided (in module gf25519) and used in some cases.
+//  - If feature gf25519_m64 is set, then GF255<19> is used.
+//  - If feature gf25519_m51 is set, then the alternate implementation is used.
+//  - If neither gf25519_m64 nor gf25519_m51 is set, then the selected
+//    implementation depends on the target architecture.
+//  - Features gf25519_m51 and gf25519_m64 are mutually incompatible; they
+//    cannot be both set at the same time.
+#[cfg(all(
+    feature = "gf255_m51",
+    feature = "gf255_m64",
+))]
+compile_error!("cannot use m51 and m64 GF255 implementations simultaneously");
+
+#[cfg(all(
+    any(
+        feature = "gf255",
+        feature = "gf255e",
+        feature = "gf255s",
+        feature = "gf25519"),
+    not(feature = "gf255_m51"),
+    any(
+        feature = "gf255_m64",
+        not(target_arch = "riscv64")),
+))]
+pub mod gf255_m64;
+
+#[cfg(all(
+    any(
+        feature = "gf255",
+        feature = "gf255e",
+        feature = "gf255s",
+        feature = "gf25519"),
+    not(feature = "gf255_m51"),
+    any(
+        feature = "gf255_m64",
+        not(target_arch = "riscv64")),
+))]
+pub use gf255_m64::GF255;
+
+#[cfg(all(
+    any(
+        feature = "gf255",
+        feature = "gf255e",
+        feature = "gf255s",
+        feature = "gf25519"),
+    not(feature = "gf255_m64"),
+    any(
+        feature = "gf255_m51",
+        target_arch = "riscv64"),
+))]
+pub mod gf255_m51;
+
+#[cfg(all(
+    any(
+        feature = "gf255",
+        feature = "gf255e",
+        feature = "gf255s",
+        feature = "gf25519"),
+    not(feature = "gf255_m64"),
+    any(
+        feature = "gf255_m51",
+        target_arch = "riscv64"),
+))]
+pub use gf255_m51::GF255;
+
+#[cfg(feature = "gf255e")]
+pub type GF255e = GF255<18651>;
+
+#[cfg(feature = "gf255s")]
+pub type GF255s = GF255<3957>;
+
+#[cfg(feature = "gf25519")]
+pub type GF25519 = GF255<19>;
+
+#[cfg(any(
+    feature = "modint256",
+    feature = "gfp256",
+))]
 pub mod modint;
+
+/* disabled -- not faster than the generic code
+#[cfg(feature = "gfp256")]
+pub mod gfp256;
+
+#[cfg(feature = "gfp256")]
+pub use gfp256::GFp256;
+*/
+
+#[cfg(feature = "gfp256")]
+pub type GFp256 = modint::ModInt256<
+    0xFFFFFFFFFFFFFFFF, 0x00000000FFFFFFFF,
+    0x0000000000000000, 0xFFFFFFFF00000001>;
+
+#[cfg(feature = "gfp256")]
+impl GFp256 {
+    /// Encodes a scalar element into bytes (little-endian).
+    pub fn encode(self) -> [u8; 32] {
+        self.encode32()
+    }
+}
+
+#[cfg(feature = "secp256k1")]
 pub mod gfsecp256k1;
+
+#[cfg(feature = "secp256k1")]
+pub use gfsecp256k1::GFsecp256k1;
+
+#[cfg(feature = "gf448")]
 pub mod gf448;
+
+#[cfg(feature = "gf448")]
+pub use gf448::GF448;
+
 pub mod lagrange;
+
+#[cfg(feature = "gfgen")]
 pub mod gfgen;
 
 // Carrying addition and subtraction should use u64::carrying_add()
@@ -13,6 +126,7 @@ pub mod gfgen;
 // (x, y, c_in) -> x + y + c_in mod 2^64, c_out
 
 #[cfg(target_arch = "x86_64")]
+#[allow(dead_code)]
 #[inline(always)]
 pub(crate) fn addcarry_u64(x: u64, y: u64, c: u8) -> (u64, u8) {
     use core::arch::x86_64::_addcarry_u64;
@@ -24,6 +138,7 @@ pub(crate) fn addcarry_u64(x: u64, y: u64, c: u8) -> (u64, u8) {
 }
 
 #[cfg(not(target_arch = "x86_64"))]
+#[allow(dead_code)]
 #[inline(always)]
 pub(crate) const fn addcarry_u64(x: u64, y: u64, c: u8) -> (u64, u8) {
     let z = (x as u128).wrapping_add(y as u128).wrapping_add(c as u128);
@@ -34,6 +149,7 @@ pub(crate) const fn addcarry_u64(x: u64, y: u64, c: u8) -> (u64, u8) {
 // (x, y, c_in) -> x - y - c_in mod 2^64, c_out
 
 #[cfg(target_arch = "x86_64")]
+#[allow(dead_code)]
 #[inline(always)]
 pub(crate) fn subborrow_u64(x: u64, y: u64, c: u8) -> (u64, u8) {
     use core::arch::x86_64::_subborrow_u64;
@@ -45,6 +161,7 @@ pub(crate) fn subborrow_u64(x: u64, y: u64, c: u8) -> (u64, u8) {
 }
 
 #[cfg(not(target_arch = "x86_64"))]
+#[allow(dead_code)]
 #[inline(always)]
 pub(crate) const fn subborrow_u64(x: u64, y: u64, c: u8) -> (u64, u8) {
     let z = (x as u128).wrapping_sub(y as u128).wrapping_sub(c as u128);
@@ -52,6 +169,7 @@ pub(crate) const fn subborrow_u64(x: u64, y: u64, c: u8) -> (u64, u8) {
 }
 
 // Compute x*y over 128 bits, returned as two 64-bit words (lo, hi)
+#[allow(dead_code)]
 #[inline(always)]
 pub(crate) const fn umull(x: u64, y: u64) -> (u64, u64) {
     let z = (x as u128) * (y as u128);
@@ -59,6 +177,7 @@ pub(crate) const fn umull(x: u64, y: u64) -> (u64, u64) {
 }
 
 // Compute x*y+z over 128 bits, returned as two 64-bit words (lo, hi)
+#[allow(dead_code)]
 #[inline(always)]
 pub(crate) const fn umull_add(x: u64, y: u64, z: u64) -> (u64, u64) {
     let t = ((x as u128) * (y as u128)).wrapping_add(z as u128);
@@ -66,6 +185,7 @@ pub(crate) const fn umull_add(x: u64, y: u64, z: u64) -> (u64, u64) {
 }
 
 // Compute x*y+z1+z2 over 128 bits, returned as two 64-bit words (lo, hi)
+#[allow(dead_code)]
 #[inline(always)]
 pub(crate) const fn umull_add2(x: u64, y: u64, z1: u64, z2: u64) -> (u64, u64) {
     let t = ((x as u128) * (y as u128))
@@ -74,6 +194,7 @@ pub(crate) const fn umull_add2(x: u64, y: u64, z1: u64, z2: u64) -> (u64, u64) {
 }
 
 // Compute x1*y1+x2*y2 over 128 bits, returned as two 64-bit words (lo, hi)
+#[allow(dead_code)]
 #[inline(always)]
 pub(crate) const fn umull_x2(x1: u64, y1: u64, x2: u64, y2: u64) -> (u64, u64) {
     let z1 = (x1 as u128) * (y1 as u128);
@@ -83,6 +204,7 @@ pub(crate) const fn umull_x2(x1: u64, y1: u64, x2: u64, y2: u64) -> (u64, u64) {
 }
 
 // Compute x1*y1+x2*y2+z3 over 128 bits, returned as two 64-bit words (lo, hi)
+#[allow(dead_code)]
 #[inline(always)]
 pub(crate) const fn umull_x2_add(x1: u64, y1: u64, x2: u64, y2: u64, z3: u64) -> (u64, u64) {
     let z1 = (x1 as u128) * (y1 as u128);
@@ -94,6 +216,7 @@ pub(crate) const fn umull_x2_add(x1: u64, y1: u64, x2: u64, y2: u64, z3: u64) ->
 // Return 0xFFFFFFFFFFFFFFFF if x >= 0x8000000000000000, 0 otherwise
 // (i.e. take the sign bit of the signed interpretation, and expand it
 // to 64 bits).
+#[allow(dead_code)]
 #[inline(always)]
 pub(crate) const fn sgnw(x: u64) -> u64 {
     ((x as i64) >> 63) as u64
@@ -114,6 +237,7 @@ pub(crate) const fn sgnw(x: u64) -> u64 {
     all(target_arch = "x86_64", target_feature = "lzcnt"),
     target_arch = "aarch64",
     ))]
+#[allow(dead_code)]
 #[inline(always)]
 pub(crate) const fn lzcnt(x: u64) -> u32 {
     x.leading_zeros()
@@ -123,6 +247,7 @@ pub(crate) const fn lzcnt(x: u64) -> u32 {
     all(target_arch = "x86_64", target_feature = "lzcnt"),
     target_arch = "aarch64",
     )))]
+#[allow(dead_code)]
 pub(crate) const fn lzcnt(x: u64) -> u32 {
     let m = sgnw((x >> 32).wrapping_sub(1));
     let s = m & 32;
