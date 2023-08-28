@@ -2,7 +2,7 @@ use core::ops::{Add, AddAssign, Div, DivAssign, Mul, MulAssign, Neg, Sub, SubAss
 use core::convert::TryFrom;
 
 use super::{addcarry_u64, subborrow_u64, umull, umull_add, umull_add2, umull_x2, umull_x2_add, sgnw, lzcnt};
-use super::lagrange::lagrange253_vartime;
+use super::lagrange::{lagrange256_vartime, lagrange128_basisconv_vartime, lagrange128_spec_vartime, lagrange192_spec_vartime};
 
 #[derive(Clone, Copy, Debug)]
 pub struct ModInt256<const M0: u64, const M1: u64, const M2: u64, const M3: u64>([u64; 4]);
@@ -39,6 +39,14 @@ impl<const M0: u64, const M1: u64, const M2: u64, const M3: u64> ModInt256<M0, M
             if M3 < 0x100000000000000 { 7 } else { 8 }
         }
     });
+
+    // (q - 1)/2
+    const QM1D2: [u64; 4] = [
+        (M0 >> 1) | (M1 << 63),
+        (M1 >> 1) | (M2 << 63),
+        (M2 >> 1) | (M3 << 63),
+        M3 >> 1,
+    ];
 
     // floor(q / 4) + 1 (equal to (q+1)/4 if q = 3 mod 8).
     const QP1D4: [u64; 4] = Self::make_qp1d4();
@@ -1521,6 +1529,63 @@ impl<const M0: u64, const M1: u64, const M2: u64, const M3: u64> ModInt256<M0, M
         (x, r)
     }
 
+    // Normalize a value as a signed integer around zero (i.e. in the
+    // [-(q-1)/2 .. +(q-1)/2] range). This assumes that the current value
+    // is NOT in Montgomery representation (this cannot happen with public
+    // values).
+    #[inline]
+    fn norm_nonmonty_signed(self) -> [u64; 4] {
+        // If (q-1)/2 - z yields a borrow, then z >= (q+1)/2 and we must
+        // return z - q instead of z.
+        let (_, cc) = subborrow_u64(Self::QM1D2[0], self.0[0], 0);
+        let (_, cc) = subborrow_u64(Self::QM1D2[1], self.0[1], cc);
+        let (_, cc) = subborrow_u64(Self::QM1D2[2], self.0[2], cc);
+        let (_, cc) = subborrow_u64(Self::QM1D2[3], self.0[3], cc);
+        let (sm, _) = subborrow_u64(0, 0, cc);
+        let (d0, cc) = subborrow_u64(self.0[0], sm & Self::MODULUS[0], 0);
+        let (d1, cc) = subborrow_u64(self.0[1], sm & Self::MODULUS[1], cc);
+        let (d2, cc) = subborrow_u64(self.0[2], sm & Self::MODULUS[2], cc);
+        let (d3, _)  = subborrow_u64(self.0[3], sm & Self::MODULUS[3], cc);
+        [d0, d1, d2, d3]
+    }
+
+    // Get the absolute value of a signed integer.
+    #[inline]
+    fn signed_abs(x: &[u64; 4]) -> [u64; 4] {
+        let m = sgnw(x[3]);
+        let (d0, cc) = subborrow_u64(x[0] ^ m, m, 0);
+        let (d1, cc) = subborrow_u64(x[1] ^ m, m, cc);
+        let (d2, cc) = subborrow_u64(x[2] ^ m, m, cc);
+        let (d3, _)  = subborrow_u64(x[3] ^ m, m, cc);
+        [d0, d1, d2, d3]
+    }
+
+    // Compare two unsigned integers together.
+    #[inline]
+    fn unsigned_lt(x: &[u64; 4], y: &[u64; 4]) -> bool {
+        let (_, cc) = subborrow_u64(x[0], y[0], 0);
+        let (_, cc) = subborrow_u64(x[1], y[1], cc);
+        let (_, cc) = subborrow_u64(x[2], y[2], cc);
+        let (_, cc) = subborrow_u64(x[3], y[3], cc);
+        cc != 0
+    }
+
+    // Given a _signed_ two-word factor f, return self*f, normalized around
+    // 0 (signed), and truncated to three words. This function assumes that
+    // the result fits in three words (with its sign bit).
+    fn smul_trunc(self, f: &[u64; 2]) -> [u64; 3] {
+        // We set the factor z in normal representation, not Montgomery.
+        let mut z = Self([f[0], f[1], 0, 0]);
+        z.set_cond(&(z - Self([0, 0, 1, 0])), sgnw(f[1]) as u32);
+        z *= &self;
+        let sz = sgnw(z.0[3] | z.0[3].wrapping_neg());
+        let (d0, cc) = subborrow_u64(z.0[0], sz & Self::MODULUS[0], 0);
+        let (d1, cc) = subborrow_u64(z.0[1], sz & Self::MODULUS[1], cc);
+        let (d2, _)  = subborrow_u64(z.0[2], sz & Self::MODULUS[2], cc);
+
+        [d0, d1, d2]
+    }
+
     // Compute two signed integers (c0, c1) such that this self = c0/c1 in
     // the ring. If the modulus is less than Nmax = floor(2^254 / (2/sqrt(3)))
     // (approximately 1.73*2^253), then a solution is guaranteed to exist
@@ -1543,9 +1608,187 @@ impl<const M0: u64, const M1: u64, const M2: u64, const M3: u64> ModInt256<M0, M
     // THIS FUNCTION IS NOT CONSTANT-TIME. It shall be used only for a
     // public source element.
     pub fn split_vartime(self) -> (i128, i128) {
+        // The core operation is that if we have a lattice basis
+        // [[a0, a1], [b0, b1]] which is "imbalanced", i.e. such that
+        // a1 and b1 are much shorter than a0 and b0, then we can
+        // do a reduction on [[a0', 1], [b0', 0]], with a0' and b0'
+        // being scaled down approximations of a0 and b0:
+        //    a0 = a0'*2^w + a0''   (0 <= a0'' < 2^w)
+        //    b0 = b0'*2^w + b0''   (0 <= b0'' < 2^w)
+        // That inner reduction yields [[u0, u1], [v0, v1]] with:
+        //    [u0, u1] = u1*[a0', 1] - alpha*[b0', 0]
+        //    [v0, v1] = v1*[a0', 1] - beta*[b0', 0]
+        // for some integers alpha and beta. We can apply these factors to
+        // the original basis:
+        //    u1*[a0, a1] - alpha*[b0, b1]
+        //     = [u0*2^w + u1*a0'' - alpha*b0'', u1*a1 - alpha*b1]
+        // and similarly for (v1, beta). If the original a0 and b0 had
+        // size 3*w bits, and a1 and b1 had size w bits at most, then
+        // the resulting lattice basis will heuristically use coordinates
+        // of size about 2*w bits.
+        //
+        // Here, we apply two nested levels of this operation: we scale
+        // down k and n to 171 bits each, so that the original 256-bit basis
+        // reduction is replaced with two 171-bit basis reductions; the
+        // first of these reductions is further turned into two reductions
+        // of 114-bit bases.
+        //
+        // Each primitive Lagrange reduction function receives the basis
+        // to reduce (four coordinates) and returns only u1 and v1, along
+        // with the bit lengths of the squared norms of u and v. The
+        // integers alpha and beta are not computed nor returned; instead,
+        // when applying the factors to the larger basis, we always do that
+        // computation on the full original values, since the smul_trunc()
+        // function uses the general field code that ensures reduction
+        // modulo n.
+        //
+        // The reduction is only heuristic. There are rare pathological
+        // cases in which the values are not reduced enough for the
+        // target sizes; in such cases, we fallback to the generic
+        // 256-bit Lagrange reduction.
+
         let mut k = self;
         k.set_montyred();
-        lagrange253_vartime(&k.0, &Self::MODULUS)
+
+        // Scale down k and n to 114 bits and reduce.
+        let k1 = [
+            (k.0[2] >> 14) | (k.0[3] << 50),
+            k.0[3] >> 14,
+        ];
+        let n1 = [
+            (Self::MODULUS[2] >> 14) | (Self::MODULUS[3] << 50),
+            Self::MODULUS[3] >> 14,
+        ];
+        let (e0, e1, f0, f1, bl_nv) = lagrange128_basisconv_vartime(&k1, &n1);
+
+        // If u or v is not small enough, fallback to generic code.
+        if bl_nv > 124 {
+            return k.split_nonmonty_generic_vartime();
+        }
+
+        // Apply the (e, f) matrix to (k, n) scaled down to 171 bits. Since
+        // the previous reduction yielded (e, f) factors of at most 63 bits,
+        // and output vectors of at most 62 bits, the result must fit on
+        // 57 + 65 = 122 bits.
+        fn apply_matrix(a0: u64, a1: u64, b0: u64, b1: u64, e: i64, f: i64)
+            -> [u64; 2]
+        {
+            let (c0, hi) = umull(a0, e as u64);
+            let c1 = a1.wrapping_mul(e as u64).wrapping_add(hi)
+                .wrapping_sub(((e >> 63) as u64) & a0);
+            let (d0, hi) = umull(b0, f as u64);
+            let d1 = b1.wrapping_mul(f as u64).wrapping_add(hi)
+                .wrapping_sub(((f >> 63) as u64) & b0);
+            let (r0, cc) = addcarry_u64(c0, d0, 0);
+            let (r1, _)  = addcarry_u64(c1, d1, cc);
+
+            [r0, r1]
+        }
+        let kr0 = (k.0[1] >> 21) | (k.0[2] << 43);
+        let kr1 = (k.0[2] >> 21) | (k.0[3] << 43);
+        let nr0 = (Self::MODULUS[1] >> 21) | (Self::MODULUS[2] << 43);
+        let nr1 = (Self::MODULUS[2] >> 21) | (Self::MODULUS[3] << 43);
+        let a0 = apply_matrix(kr0, kr1, nr0, nr1, e0, e1);
+        let a1 = [ e0 as u64, (e0 >> 63) as u64 ];
+        let b0 = apply_matrix(kr0, kr1, nr0, nr1, f0, f1);
+        let b1 = [ f0 as u64, (f0 >> 63) as u64 ];
+
+        // Further reduce the resulting basis. Since this starts with
+        // [[k', 1], [n', 0]], with k' and n' over (at most) 171 bits,
+        // we expect the output to use 86 bits or so.
+        let (u1, v1, bl_nv) = lagrange128_spec_vartime(&a0, &a1, &b0, &b1);
+
+        // We got a reduced basis which is such that:
+        //     [u0, u1] = u1*[k', 1] - alpha*[n', 0]
+        //     [v0, v1] = v1*[k', 1] - beta*[n', 0]
+        // for some integers alpha and beta. We apply these factors to the
+        // original basis:
+        //     [a0, a1] = u1*[k, 1] - alpha*[n, 0]
+        //     [b0, b1] = v1*[k, 1] - beta*[n, 0]
+        // Indeed:
+        //     k = k'*2^85 + k''    with 0 <= k'' < 2^85
+        //     n = n'*2^85 + n''    with 0 <= n'' < 2^85
+        // Thus:
+        //     a0 = u1*k - alpha*n
+        //        = (u1*k' - alpha*n')*2^85 + (u1*k'' - alpha*n'')
+        //        = u0*2^85 + (u1*k'' - alpha*n'')
+        // Since [u0, u1] has size at most 86 bits, we get that a0 must fit
+        // on 173 bits. Note that we can compute that value without knowing
+        // alpha at all: we just compute u1*k modulo n; with n >= 2^192,
+        // there is only one value alpha*n that can yield a short enough
+        // output.
+        //
+        // [u0, u1] is a shortest vector; [v0, v1] completes the basis, and is
+        // _heuristically_ short, but there are pathological cases in which
+        // [v0, v1] is substantially larger and does not fit on 192 bits.
+        // In such cases, we fallback to the generic code.
+        if bl_nv > 208 {
+            assert!(false);
+            return k.split_nonmonty_generic_vartime();
+        }
+
+        let a0 = self.smul_trunc(&u1);
+        let a1 = [u1[0], u1[1], sgnw(u1[1])];
+        let b0 = self.smul_trunc(&v1);
+        let b1 = [v1[0], v1[1], sgnw(v1[1])];
+
+        let (u1, _, _) = lagrange192_spec_vartime(&a0, &a1, &b0, &b1);
+
+        // We get u1 over 128 bits, signed; however, the actual range may
+        // be up to about 1.08*2^128 in absolute value, so that the value
+        // may be truncated. The true u1 value is then one of
+        // { u1, u1 + 2^128, u1 - 2^128 }. We can find the right one by
+        // trying out each, i.e. for each potential u1 value, we compute
+        // u0 = u1*k mod q, and keep the one which is lowest when normalized
+        // as an integer around 0.
+        let c1 = ((u1[0] as u128) | ((u1[1] as u128) << 64)) as i128;
+
+        // We multiply k with u1 in non-Montgomery representation, so that
+        // we get a non-Montgomery result.
+        let mut z0 = Self([ u1[0], u1[1], 0, 0 ]);
+        z0.set_cond(&(z0 - Self([0, 0, 1, 0])), sgnw(u1[1]) as u32);
+        z0.set_mul(&self);
+        // Normalize around 0.
+        let d = z0.norm_nonmonty_signed();
+
+        // If d is in the [-2^128..+2^128] range, then we can return it
+        // as is (most common case).
+        if (d[2] == 0 && d[3] == 0)
+            || (d[2] == 0xFFFFFFFFFFFFFFFF && d[2] == 0xFFFFFFFFFFFFFFFF)
+        {
+            let c0 = ((d[0] as u128) | ((d[1] as u128) << 64)) as i128;
+            return (c0, c1);
+        }
+
+        // Compute the three candidates; select the smallest one in absolute
+        // value.
+        let ks = self * Self([0, 0, 1, 0]);
+        let e = (z0 + ks).norm_nonmonty_signed();
+        let f = (z0 - ks).norm_nonmonty_signed();
+        let da = Self::signed_abs(&d);
+        let ea = Self::signed_abs(&e);
+        let fa = Self::signed_abs(&f);
+        let c0 = if Self::unsigned_lt(&da, &ea) {
+            if Self::unsigned_lt(&da, &fa) {
+                ((d[0] as u128) | ((d[1] as u128) << 64)) as i128
+            } else {
+                ((f[0] as u128) | ((f[1] as u128) << 64)) as i128
+            }
+        } else {
+            if Self::unsigned_lt(&ea, &fa) {
+                ((e[0] as u128) | ((e[1] as u128) << 64)) as i128
+            } else {
+                ((f[0] as u128) | ((f[1] as u128) << 64)) as i128
+            }
+        };
+        (c0, c1)
+    }
+
+    fn split_nonmonty_generic_vartime(self) -> (i128, i128) {
+        let (v0, v1) = lagrange256_vartime(&self.0, &Self::MODULUS, 254);
+        let c0 = ((v0[0] as u128) | ((v0[1] as u128) << 64)) as i128;
+        let c1 = ((v1[0] as u128) | ((v1[1] as u128) << 64)) as i128;
+        (c0, c1)
     }
 
     // Equality check between two elements (constant-time); returned value

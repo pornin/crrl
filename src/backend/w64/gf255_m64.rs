@@ -2,7 +2,7 @@ use core::ops::{Add, AddAssign, Div, DivAssign, Mul, MulAssign, Neg, Sub, SubAss
 use core::convert::TryFrom;
 
 use super::{addcarry_u64, subborrow_u64, umull, umull_x2, umull_x2_add, sgnw, lzcnt};
-use super::lagrange::lagrange253_vartime;
+use super::lagrange::{lagrange253_vartime};
 
 #[derive(Clone, Copy, Debug)]
 pub struct GF255<const MQ: u64>([u64; 4]);

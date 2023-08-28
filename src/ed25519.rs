@@ -948,7 +948,7 @@ impl Point {
     fn lookup_duif(win: &[PointDuif; 16], k: i8) -> PointDuif {
         // Split k into its sign s (0xFFFFFFFF for negative) and
         // absolute value (f).
-        let s = ((k as i32) >> 8) as u32;
+        let s = ((k as i32) >> 31) as u32;
         let f = ((k as u32) ^ s).wrapping_sub(s);
         let mut ypx = GF25519::ONE;
         let mut ymx = GF25519::ONE;

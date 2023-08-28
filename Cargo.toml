@@ -1,6 +1,6 @@
 [package]
 name = "crrl"
-version = "0.6.0"
+version = "0.7.0"
 authors = ["Thomas Pornin <thomas.pornin@nccgroup.com>"]
 edition = "2018"
 license = "MIT"
