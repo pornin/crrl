@@ -46,8 +46,9 @@
 use core::ops::{Add, AddAssign, Mul, MulAssign, Neg, Sub, SubAssign};
 use core::convert::TryFrom;
 use super::field::{GF255e, ModInt256};
-use blake2::{Blake2s256, Digest};
+use super::blake2s::Blake2s256;
 use super::{CryptoRng, RngCore};
+use super::{Zu128, Zu256, Zu384};
 
 /// An element in the jq255e group.
 #[derive(Clone, Copy, Debug)]
@@ -103,7 +104,7 @@ impl Point {
 
     /// The conventional base point (group generator).
     ///
-    /// This point generates the whole group, which as prime order r
+    /// This point generates the whole group, which has prime order r
     /// (integers modulo r are represented by the `Scalar` type).
     pub const BASE: Self = Self {
         E: GF255e::w64be(0, 0, 0, 3),
@@ -624,6 +625,7 @@ impl Point {
     pub const HASHNAME_BLAKE2S:     &'static str = "blake2s";
     pub const HASHNAME_BLAKE3:      &'static str = "blake3";
 
+    /* unused
     /// Recodes a scalar into 51 signed digits.
     ///
     /// Each digit is in -15..+16, top digit is in 0..+16.
@@ -649,6 +651,7 @@ impl Point {
         }
         sd
     }
+    */
 
     /// Recodes a half-width scalar into 26 signed digits.
     ///
@@ -668,29 +671,54 @@ impl Point {
     }
 
     /// Lookups a point from a window, with sign handling (constant-time).
-    fn lookup(win: &[Self; 16], k: i8) -> Self {
+    fn lookup(win: &[GF255e; 64], k: i8) -> Self {
         // Split k into its sign s (0xFFFFFFFF for negative) and
-        // absolute value (f).
+        // absolute value (f), then subtract 1 from f.
         let s = ((k as i32) >> 8) as u32;
-        let f = ((k as u32) ^ s).wrapping_sub(s);
-        let mut P = Self::NEUTRAL;
-        for i in 0..16 {
-            // win[i] contains (i+1)*P; we want to keep it if (and only if)
-            // i+1 == f.
-            // Values a-b and b-a both have their high bit equal to 0 only
-            // if a == b.
-            let j = (i as u32) + 1;
-            let w = !(f.wrapping_sub(j) | j.wrapping_sub(f));
-            let w = ((w as i32) >> 31) as u32;
+        let f = ((k as u32) ^ s).wrapping_sub(s).wrapping_sub(1);
+        let vv = GF255e::lookup16_x4(win, f);
+        let mut P = Self {
+            E: vv[0],
+            U: vv[1],
+            Z: vv[2],
+            T: vv[3],
+        };
 
-            P.E.set_cond(&win[i].E, w);
-            P.Z.set_cond(&win[i].Z, w);
-            P.U.set_cond(&win[i].U, w);
-            P.T.set_cond(&win[i].T, w);
-        }
+        // If f == -1 then the four coordinates are left at zero, and we
+        // must adjust that.
+        let fz = ((f as i32) >> 31) as u32;
+        P.E.set_cond(&Self::NEUTRAL.E, fz);
+        P.Z.set_cond(&Self::NEUTRAL.Z, fz);
 
-        // Negate the returned value if needed.
-        P.U.set_cond(&-P.U, s);
+        // Negate the point if the original index k was negative.
+        P.set_condneg(s);
+
+        P
+    }
+
+    /// Lookups a point from a window of points in affine extended
+    /// coordinates, with sign handling (constant-time).
+    fn lookup_affine_extended(win: &[GF255e; 48], k: i8)
+        -> PointAffineExtended
+    {
+        // Split k into its sign s (0xFFFFFFFF for negative) and
+        // absolute value (f), then subtract 1 from f.
+        let s = ((k as i32) >> 8) as u32;
+        let f = ((k as u32) ^ s).wrapping_sub(s).wrapping_sub(1);
+        let vv = GF255e::lookup16_x3(win, f);
+        let mut P = PointAffineExtended {
+            e: vv[0],
+            u: vv[1],
+            t: vv[2],
+        };
+
+        // If f == -1 then the four coordinates are left at zero, and we
+        // must adjust that.
+        let fz = ((f as i32) >> 31) as u32;
+        P.e.set_cond(&PointAffineExtended::NEUTRAL.e, fz);
+
+        // Negate the point if the original index k was negative.
+        P.set_condneg(s);
 
         P
     }
@@ -700,101 +728,36 @@ impl Point {
     /// Given a 256-bit integer k (unsigned, provided as 8 32-bit limbs in
     /// little-endian order, less than the group order r) and a multiplier
     /// integer e (lower than 2^127 - 2), compute y = round(k*e / r).
-    fn mul_divr_rounded(k: &[u32; 8], e: &[u32; 4]) -> [u32; 4] {
-        // TODO: see if this code should be moved to the backends, so
-        // that an optimized 64-bit version could be made. This is
-        // probably not worth the effort.
-
-        // Computations are done over 32-bit limbs because we do not
-        // trust the standard support for integers larger than the
-        // native register size to be constant-time.
-
+    fn mul_divr_rounded(k: &Zu256, e: &Zu128) -> Zu128 {
         // z <- k*e
-        let mut z = [0u32; 12];
-        for i in 0..8 {
-            let w = (k[i] as u64) * (e[0] as u64) + (z[i] as u64);
-            z[i] = w as u32;
-            let cc = w >> 32;
-            let w = (k[i] as u64) * (e[1] as u64) + (z[i + 1] as u64) + cc;
-            z[i + 1] = w as u32;
-            let cc = w >> 32;
-            let w = (k[i] as u64) * (e[2] as u64) + (z[i + 2] as u64) + cc;
-            z[i + 2] = w as u32;
-            let cc = w >> 32;
-            let w = (k[i] as u64) * (e[3] as u64) + (z[i + 3] as u64) + cc;
-            z[i + 3] = w as u32;
-            z[i + 4] = (w >> 32) as u32;
-        }
+        let mut z = k.mul256x128(e);
 
-        // (r-1)/2
-        const HR: [u32; 12] = [
-            0x3A6C2292, 0x8FA96457, 0xAA03C629, 0xCE864987,
-            0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF, 0x1FFFFFFF,
-            0x00000000, 0x00000000, 0x00000000, 0x00000000,
-        ];
+        // (r-1)/2 (padded to 384 bits)
+        const HR: Zu384 = Zu384::w64le(
+            0x8FA964573A6C2292, 0xCE864987AA03C629,
+            0xFFFFFFFFFFFFFFFF, 0x1FFFFFFFFFFFFFFF,
+            0x0000000000000000, 0x0000000000000000);
+
+        // r0 = 2^254 - r
+        const R0: Zu128 = Zu128::w64le(0xE0AD37518B27BADB, 0x62F36CF0ABF873AC);
 
         // z <- z + (r-1)/2
-        let mut cc = 0u32;
-        for i in 0..12 {
-            let w = (z[i] as u64) + (HR[i] as u64) + (cc as u64);
-            z[i] = w as u32;
-            cc = (w >> 32) as u32;
-        }
+        z.set_add(&HR);
 
+        // z0 <- z mod 2^254
         // y <- floor(z / 2^254) + 1
-        let mut y = [
-            (z[ 7] >> 30) | (z[ 8] << 2),
-            (z[ 8] >> 30) | (z[ 9] << 2),
-            (z[ 9] >> 30) | (z[10] << 2),
-            (z[10] >> 30) | (z[11] << 2),
-        ];
-        let mut cc = 1u32;
-        for i in 0..4 {
-            let w = (y[i] as u64) + (cc as u64);
-            y[i] = w as u32;
-            cc = (w >> 32) as u32;
-        }
-
-        // r0 = 2^255 - r
-        const R0: [u32; 4] = [
-            0x8B27BADB, 0xE0AD3751, 0xABF873AC, 0x62F36CF0,
-        ];
+        let (z0, mut y) = z.trunc_and_rsh_cc(1, 254);
 
         // t <- y*r0
-        let mut t = [0u32; 8];
-        for i in 0..4 {
-            let w = (y[i] as u64) * (R0[0] as u64) + (t[i] as u64);
-            t[i] = w as u32;
-            let cc = w >> 32;
-            let w = (y[i] as u64) * (R0[1] as u64) + (t[i + 1] as u64) + cc;
-            t[i + 1] = w as u32;
-            let cc = w >> 32;
-            let w = (y[i] as u64) * (R0[2] as u64) + (t[i + 2] as u64) + cc;
-            t[i + 2] = w as u32;
-            let cc = w >> 32;
-            let w = (y[i] as u64) * (R0[3] as u64) + (t[i + 3] as u64) + cc;
-            t[i + 3] = w as u32;
-            t[i + 4] = (w >> 32) as u32;
-        }
+        let t = y.mul128x128(&R0);
 
-        // t <- t + z0
-        // We are only interested in the high limb.
-        z[7] &= 0x3FFFFFFF;
-        let mut w = (z[0] as u64) + (t[0] as u64);
-        for i in 1..8 {
-            w = (z[i] as u64) + (t[i] as u64) + (w >> 32);
-        }
+        // Get the high 32-bit limb of t + z0.
+        let w = t.add_rsh224(&z0);
 
         // The high limb is in w and is lower than 2^31. If it is
         // lower than 2^30, then y is too large and we must decrement
         // it; otherwise, we keep it unchanged.
-        let w = (y[0] as u64).wrapping_sub(1 - (w >> 30));
-        y[0] = w as u32;
-        let w = (y[1] as u64).wrapping_sub(w >> 63);
-        y[1] = w as u32;
-        let w = (y[2] as u64).wrapping_sub(w >> 63);
-        y[2] = w as u32;
-        y[3] -= (w >> 32) as u32;
+        y.set_sub_u32(1 - (w >> 30));
 
         y
     }
@@ -806,93 +769,27 @@ impl Point {
     /// sgn(x) = 0xFFFFFFFF for x < 0, 0x00000000 for x >= 0.
     fn split_mu(k: &Scalar) -> (u128, u32, u128, u32) {
         // Obtain k as an integer t in the 0..r-1 range.
-        let mut t = [0u32; 8];
-        let bb = k.encode();
-        for i in 0..8 {
-            t[i] = u32::from_le_bytes(*<&[u8; 4]>::try_from(
-                &bb[(4 * i)..(4 * i + 4)]).unwrap());
-        }
+        let ki = Zu256::decode(&k.encode()).unwrap();
 
-        const EU: [u32; 4] = [
-            0xC93F6111, 0x2ACCF9DE, 0x53C2C6E6, 0x1A509F7A
-        ];
+        // Constants u and v such that mu = u/v mod r.
+        const EU: Zu128 = Zu128::w64le(0x2ACCF9DEC93F6111, 0x1A509F7A53C2C6E6);
+        const EV: Zu128 = Zu128::w64le(0x0B7A31305466F77E, 0x7D440C6AFFBB3A93);
 
-        const EV: [u32; 4] = [
-            0x5466F77E, 0x0B7A3130, 0xFFBB3A93, 0x7D440C6A
-        ];
-
-        // c <- round(t*v / r)
-        // d <- round(t*u / r)
-        let c = Self::mul_divr_rounded(&t, &EV);
-        let d = Self::mul_divr_rounded(&t, &EU);
+        // c <- round(ki*v / r)
+        // d <- round(ki*u / r)
+        let c = Self::mul_divr_rounded(&ki, &EV);
+        let d = Self::mul_divr_rounded(&ki, &EU);
 
         // k0 = k - d*u - c*v
         // k1 = d*v - c*u
+        let mut k0 = ki.trunc128();
+        k0.set_sub(&d.mul128x128trunc(&EU));
+        k0.set_sub(&c.mul128x128trunc(&EV));
+        let mut k1 = d.mul128x128trunc(&EV);
+        k1.set_sub(&c.mul128x128trunc(&EU));
 
-        fn mul128(a: [u32; 4], b: [u32; 4]) -> [u32; 4] {
-            let w = (a[0] as u64) * (b[0] as u64);
-            let d0 = w as u32;
-            let w = (a[0] as u64) * (b[1] as u64) + (w >> 32);
-            let mut d1 = w as u32;
-            let w = (a[0] as u64) * (b[2] as u64) + (w >> 32);
-            let mut d2 = w as u32;
-            let mut d3 = a[0].wrapping_mul(b[3]).wrapping_add((w >> 32) as u32);
-
-            let w = (a[1] as u64) * (b[0] as u64) + (d1 as u64);
-            d1 = w as u32;
-            let w = (a[1] as u64) * (b[1] as u64) + (d2 as u64) + (w >> 32);
-            d2 = w as u32;
-            d3 = a[1].wrapping_mul(b[2]).wrapping_add(d3)
-                .wrapping_add((w >> 32) as u32);
-
-            let w = (a[2] as u64) * (b[0] as u64) + (d2 as u64);
-            d2 = w as u32;
-            d3 = a[2].wrapping_mul(b[1]).wrapping_add(d3)
-                .wrapping_add((w >> 32) as u32);
-
-            d3 = a[3].wrapping_mul(b[0]).wrapping_add(d3);
-
-            [ d0, d1, d2, d3 ]
-        }
-
-        fn sub128(a: [u32; 4], b: [u32; 4]) -> [u32; 4] {
-            let w = (a[0] as u64).wrapping_sub(b[0] as u64);
-            let d0 = w as u32;
-            let w = (a[1] as u64).wrapping_sub(b[1] as u64)
-                .wrapping_sub(w >> 63);
-            let d1 = w as u32;
-            let w = (a[2] as u64).wrapping_sub(b[2] as u64)
-                .wrapping_sub(w >> 63);
-            let d2 = w as u32;
-            let d3 = a[3].wrapping_sub(b[3]).wrapping_sub((w >> 63) as u32);
-            [ d0, d1, d2, d3 ]
-        }
-
-        fn cneg128(a: [u32; 4]) -> (u128, u32) {
-            let s = ((a[3] as i32) >> 31) as u32;
-            let w = ((a[0] ^ s) as u64).wrapping_sub(s as u64);
-            let d0 = w as u32;
-            let w = ((a[1] ^ s) as u64).wrapping_sub(s as u64)
-                .wrapping_sub(w >> 63);
-            let d1 = w as u32;
-            let w = ((a[2] ^ s) as u64).wrapping_sub(s as u64)
-                .wrapping_sub(w >> 63);
-            let d2 = w as u32;
-            let d3 = (a[3] ^ s).wrapping_sub(s).wrapping_sub((w >> 63) as u32);
-
-            let d = (d0 as u128)
-                  | ((d1 as u128) << 32)
-                  | ((d2 as u128) << 64)
-                  | ((d3 as u128) << 96);
-            (d, s)
-        }
-
-        let tt = [ t[0], t[1], t[2], t[3] ];
-        let k0 = sub128(sub128(tt, mul128(d, EU)), mul128(c, EV));
-        let k1 = sub128(mul128(d, EV), mul128(c, EU));
-
-        let (n0, s0) = cneg128(k0);
-        let (n1, s1) = cneg128(k1);
+        let (n0, s0) = k0.abs();
+        let (n1, s1) = k1.abs();
         (n0, s0, n1, s1)
     }
 
@@ -919,19 +816,52 @@ impl Point {
         //   win1[i] = (i+1)*sgn(k1)*zeta(P)
         // with zeta(e, u) = (e, u*eta) for eta = sqrt(-1) (this is an
         // endomorphism on the group).
-        let mut win0 = [Self::NEUTRAL; 16];
-        win0[0] = *self;
-        win0[0].set_condneg(s0);
+        let mut win0 = [GF255e::ZERO; 64];
+        self.set_condneg(s0);
+        (win0[0], win0[1], win0[2], win0[3]) = (self.E, self.U, self.Z, self.T);
         for i in 1..8 {
-            let j = 2 * i;
-            win0[j - 1] = win0[i - 1].double();
-            win0[j] = win0[j - 1] + win0[0];
+            let mut Q = Self {
+                E: win0[4 * i - 4],
+                U: win0[4 * i - 3],
+                Z: win0[4 * i - 2],
+                T: win0[4 * i - 1],
+            };
+            Q.set_double();
+            win0[8 * i - 4] = Q.E;
+            win0[8 * i - 3] = Q.U;
+            win0[8 * i - 2] = Q.Z;
+            win0[8 * i - 1] = Q.T;
+            Q += *self;
+            win0[8 * i + 0] = Q.E;
+            win0[8 * i + 1] = Q.U;
+            win0[8 * i + 2] = Q.Z;
+            win0[8 * i + 3] = Q.T;
         }
-        win0[15] = win0[7].double();
-        let mut win1 = [Self::NEUTRAL; 16];
+        let mut Q = Self {
+            E: win0[28],
+            U: win0[29],
+            Z: win0[30],
+            T: win0[31],
+        };
+        Q.set_double();
+        win0[60] = Q.E;
+        win0[61] = Q.U;
+        win0[62] = Q.Z;
+        win0[63] = Q.T;
+
+        let mut win1 = [GF255e::ZERO; 64];
         for i in 0..16 {
-            win1[i] = win0[i].zeta();
-            win1[i].set_condneg(s0 ^ s1);
+            let mut Q = Self {
+                E: win0[4 * i + 0],
+                U: win0[4 * i + 1],
+                Z: win0[4 * i + 2],
+                T: win0[4 * i + 3],
+            }.zeta();
+            Q.set_condneg(s0 ^ s1);
+            win1[4 * i + 0] = Q.E;
+            win1[4 * i + 1] = Q.U;
+            win1[4 * i + 2] = Q.Z;
+            win1[4 * i + 3] = Q.T;
         }
 
         // Recode the two half-width scalars into 26 digits each.
@@ -948,66 +878,64 @@ impl Point {
         }
     }
 
-    /// Lookups a point from a window of points in affine extended
-    /// coordinates, with sign handling (constant-time).
-    fn lookup_affine_extended(win: &[PointAffineExtended; 16], k: i8)
-        -> PointAffineExtended
-    {
-        // Split k into its sign s (0xFFFFFFFF for negative) and
-        // absolute value (f).
-        let s = ((k as i32) >> 8) as u32;
-        let f = ((k as u32) ^ s).wrapping_sub(s);
-        let mut P = PointAffineExtended::NEUTRAL;
-        for i in 0..16 {
-            // win[i] contains (i+1)*P; we want to keep it if (and only if)
-            // i+1 == f.
-            // Values a-b and b-a both have their high bit equal to 0 only
-            // if a == b.
-            let j = (i as u32) + 1;
-            let w = !(f.wrapping_sub(j) | j.wrapping_sub(f));
-            let w = ((w as i32) >> 31) as u32;
-
-            P.e.set_cond(&win[i].e, w);
-            P.u.set_cond(&win[i].u, w);
-            P.t.set_cond(&win[i].t, w);
-        }
-
-        // Negate the returned value if needed.
-        P.u.set_cond(&-P.u, s);
-
-        P
-    }
-
     /// Sets this point by multiplying the conventional generator by the
     /// provided scalar.
     ///
     /// This operation is constant-time. It is faster than using the
     /// generic multiplication on `Self::BASE`.
     pub fn set_mulgen(&mut self, n: &Scalar) {
-        // Recode the scalar into 51 signed digits.
-        let sd = Self::recode_scalar(n);
+        // Split the scalar with the endomorphism.
+        let (n0, s0, n1, s1) = Self::split_mu(n);
 
-        // We process four chunks in parallel. Each chunk is 13 digits,
-        // except the top one which is 12 digits only.
+        // Recode the two half-width scalars into 26 digits each.
+        let sd0 = Self::recode_u128(n0);
+        let mut sd1 = Self::recode_u128(n1);
+
+        // If n0 and n1 have distinct signs, then we need to apply
+        // the -zeta endomorphism instead of zeta. We do this by
+        // negating the digits in sd1 if necessary.
+        let zn = (s0 ^ s1) as i8;
+        for i in 0..26 {
+            sd1[i] -= zn & (sd1[i] << 1);
+        }
+
+        // We process eight chunks in parallel, with alternating sizes
+        // (in digits): 6, 7, 6, 7, 6, 7, 6, 7. First four chunks are
+        // for n0, and work over the precomputed tables for B, B30, B65
+        // and B95; the four other chunks work over the same tables but
+        // with the zeta endomorphism applied.
         *self = Self::from_affine_extended(
-            &Self::lookup_affine_extended(&PRECOMP_B, sd[12]));
+            &Self::lookup_affine_extended(&PRECOMP_B30, sd0[12]));
         self.set_add_affine_extended(
-            &Self::lookup_affine_extended(&PRECOMP_B65, sd[25]));
+            &Self::lookup_affine_extended(&PRECOMP_B95, sd0[25]));
         self.set_add_affine_extended(
-            &Self::lookup_affine_extended(&PRECOMP_B130, sd[38]));
+            &Self::lookup_affine_extended(&PRECOMP_B30, sd1[12]).zeta());
+        self.set_add_affine_extended(
+            &Self::lookup_affine_extended(&PRECOMP_B95, sd1[25]).zeta());
 
         // Process the digits in high-to-low order.
-        for i in (0..12).rev() {
+        for i in (0..6).rev() {
             self.set_xdouble(5);
             self.set_add_affine_extended(
-                &Self::lookup_affine_extended(&PRECOMP_B, sd[i]));
+                &Self::lookup_affine_extended(&PRECOMP_B, sd0[i]));
             self.set_add_affine_extended(
-                &Self::lookup_affine_extended(&PRECOMP_B65, sd[i + 13]));
+                &Self::lookup_affine_extended(&PRECOMP_B30, sd0[i + 6]));
             self.set_add_affine_extended(
-                &Self::lookup_affine_extended(&PRECOMP_B130, sd[i + 26]));
+                &Self::lookup_affine_extended(&PRECOMP_B65, sd0[i + 13]));
             self.set_add_affine_extended(
-                &Self::lookup_affine_extended(&PRECOMP_B195, sd[i + 39]));
+                &Self::lookup_affine_extended(&PRECOMP_B95, sd0[i + 19]));
+            self.set_add_affine_extended(
+                &Self::lookup_affine_extended(&PRECOMP_B, sd1[i]).zeta());
+            self.set_add_affine_extended(
+                &Self::lookup_affine_extended(&PRECOMP_B30, sd1[i + 6]).zeta());
+            self.set_add_affine_extended(
+                &Self::lookup_affine_extended(&PRECOMP_B65, sd1[i + 13]).zeta());
+            self.set_add_affine_extended(
+                &Self::lookup_affine_extended(&PRECOMP_B95, sd1[i + 19]).zeta());
         }
+
+        // If n0 was negative then we need to negate the result.
+        self.set_condneg(s0);
     }
 
     /// Creates a point by multiplying the conventional generator by the
@@ -1167,16 +1095,30 @@ impl Point {
             }
             if e2 != 0 {
                 if e2 > 0 {
-                    self.set_add_affine_extended(&PRECOMP_B[e2 as usize - 1]);
+                    let j = 3 * ((e2 as usize) - 1);
+                    let Q = PointAffineExtended {
+                        e: PRECOMP_B[j + 0],
+                        u: PRECOMP_B[j + 1],
+                        t: PRECOMP_B[j + 2],
+                    };
+                    self.set_add_affine_extended(&Q);
                 } else {
-                    self.set_sub_affine_extended(&PRECOMP_B[(-e2) as usize - 1]);
+                    let j = 3 * (((-e2) as usize) - 1);
+                    let Q = PointAffineExtended {
+                        e: PRECOMP_B[j + 0],
+                        u: PRECOMP_B[j + 1],
+                        t: PRECOMP_B[j + 2],
+                    };
+                    self.set_sub_affine_extended(&Q);
                 }
             }
             if e3 != 0 {
                 if e3 > 0 {
-                    self.set_add_affine_extended(&PRECOMP_B130[e3 as usize - 1]);
+                    self.set_add_affine_extended(
+                        &PRECOMP_B130_ODD[(e3 as usize) >> 1]);
                 } else {
-                    self.set_sub_affine_extended(&PRECOMP_B130[(-e3) as usize - 1]);
+                    self.set_sub_affine_extended(
+                        &PRECOMP_B130_ODD[((-e3) as usize) >> 1]);
                 }
             }
         }
@@ -1260,16 +1202,30 @@ impl Point {
             }
             if e2 != 0 {
                 if e2 > 0 {
-                    self.set_add_affine_extended(&PRECOMP_B[e2 as usize - 1]);
+                    let j = 3 * ((e2 as usize) - 1);
+                    let Q = PointAffineExtended {
+                        e: PRECOMP_B[j + 0],
+                        u: PRECOMP_B[j + 1],
+                        t: PRECOMP_B[j + 2],
+                    };
+                    self.set_add_affine_extended(&Q);
                 } else {
-                    self.set_sub_affine_extended(&PRECOMP_B[(-e2) as usize - 1]);
+                    let j = 3 * (((-e2) as usize) - 1);
+                    let Q = PointAffineExtended {
+                        e: PRECOMP_B[j + 0],
+                        u: PRECOMP_B[j + 1],
+                        t: PRECOMP_B[j + 2],
+                    };
+                    self.set_sub_affine_extended(&Q);
                 }
             }
             if e3 != 0 {
                 if e3 > 0 {
-                    self.set_add_affine_extended(&PRECOMP_B130[e3 as usize - 1]);
+                    self.set_add_affine_extended(
+                        &PRECOMP_B130_ODD[(e3 as usize) >> 1]);
                 } else {
-                    self.set_sub_affine_extended(&PRECOMP_B130[(-e3) as usize - 1]);
+                    self.set_sub_affine_extended(
+                        &PRECOMP_B130_ODD[((-e3) as usize) >> 1]);
                 }
             }
         }
@@ -1850,9 +1806,13 @@ impl PublicKey {
     /// is returned.
     pub fn decode(buf: &[u8]) -> Option<PublicKey> {
         let point = Point::decode(buf)?;
-        let mut encoded = [0u8; 32];
-        encoded[..].copy_from_slice(&buf[0..32]);
-        Some(Self { point, encoded })
+        if point.isneutral() != 0 {
+            None
+        } else {
+            let mut encoded = [0u8; 32];
+            encoded[..].copy_from_slice(&buf[0..32]);
+            Some(Self { point, encoded })
+        }
     }
 
     /// Encode this public key into exactly 32 bytes.
@@ -1935,597 +1895,559 @@ impl PointAffineExtended {
         u: GF255e::ZERO,
         t: GF255e::ZERO,
     };
+
+    #[inline(always)]
+    fn zeta(self) -> Self {
+        Self {
+            e: self.e,
+            u: self.u * Point::ETA,
+            t: -self.t,
+        }
+    }
+
+    #[inline(always)]
+    fn set_condneg(&mut self, ctl: u32) {
+        self.u.set_cond(&-self.u, ctl);
+    }
 }
 
-// Points i*B for i = 1 to 16, affine extended format
-static PRECOMP_B: [PointAffineExtended; 16] = [
+// Points i*B for i = 1 to 16, affine extended format (e, u, t)
+static PRECOMP_B: [GF255e; 48] = [
     // B * 1
-    PointAffineExtended {
-        e: GF255e::w64be(0x0000000000000000, 0x0000000000000000,
-                         0x0000000000000000, 0x0000000000000003),
-        u: GF255e::w64be(0x0000000000000000, 0x0000000000000000,
-                         0x0000000000000000, 0x0000000000000001),
-        t: GF255e::w64be(0x0000000000000000, 0x0000000000000000,
-                         0x0000000000000000, 0x0000000000000001),
-    },
+    GF255e::w64be(0x7FFFFFFFFFFFFFFF, 0xFFFFFFFFFFFFFFFF,
+                  0xFFFFFFFFFFFFFFFF, 0xFFFFFFFFFFFFB722),
+    GF255e::w64be(0x7FFFFFFFFFFFFFFF, 0xFFFFFFFFFFFFFFFF,
+                  0xFFFFFFFFFFFFFFFF, 0xFFFFFFFFFFFFB724),
+    GF255e::w64be(0x0000000000000000, 0x0000000000000000,
+                  0x0000000000000000, 0x0000000000000001),
     // B * 2
-    PointAffineExtended {
-        e: GF255e::w64be(0x1A1F58D0FAC687D6, 0x343EB1A1F58D0FAC,
-                         0x687D6343EB1A1F58, 0xD0FAC687D6342FD1),
-        u: GF255e::w64be(0x36DB6DB6DB6DB6DB, 0x6DB6DB6DB6DB6DB6,
-                         0xDB6DB6DB6DB6DB6D, 0xB6DB6DB6DB6D97A3),
-        t: GF255e::w64be(0x414E5E0A72F05397, 0x829CBC14E5E0A72F,
-                         0x05397829CBC14E5E, 0x0A72F05397827791),
-    },
+    GF255e::w64be(0x65E0A72F05397829, 0xCBC14E5E0A72F053,
+                  0x97829CBC14E5E0A7, 0x2F05397829CB8754),
+    GF255e::w64be(0x4924924924924924, 0x9249249249249249,
+                  0x2492492492492492, 0x4924924924921F82),
+    GF255e::w64be(0x414E5E0A72F05397, 0x829CBC14E5E0A72F,
+                  0x05397829CBC14E5E, 0x0A72F05397827791),
     // B * 3
-    PointAffineExtended {
-        e: GF255e::w64be(0x6E6BA44DDB3919FD, 0x4D5065C0BA270925,
-                         0xAD8273027F0E7D48, 0x26AFA803D61A9E2F),
-        u: GF255e::w64be(0x12358E75D30336A0, 0xAB617909A3E20224,
-                         0x6B1CEBA6066D4156, 0xC2F21347C4043E79),
-        t: GF255e::w64be(0x7287BBB2DC59141C, 0x0509961D71E284EF,
-                         0xC58EF652F0485A50, 0xC4FAF5442BDDB3C7),
-    },
+    GF255e::w64be(0x6E6BA44DDB3919FD, 0x4D5065C0BA270925,
+                  0xAD8273027F0E7D48, 0x26AFA803D61A9E2F),
+    GF255e::w64be(0x12358E75D30336A0, 0xAB617909A3E20224,
+                  0x6B1CEBA6066D4156, 0xC2F21347C4043E79),
+    GF255e::w64be(0x7287BBB2DC59141C, 0x0509961D71E284EF,
+                  0xC58EF652F0485A50, 0xC4FAF5442BDDB3C7),
     // B * 4
-    PointAffineExtended {
-        e: GF255e::w64be(0x0F1371769561D944, 0x96E4BB9C95BDA924,
-                         0xCBFF478EE825BA04, 0xBCE7BEB9F8390C16),
-        u: GF255e::w64be(0x7A47C8BB65A29F71, 0x130DFA47C8BB65A2,
-                         0x9F71130DFA47C8BB, 0x65A29F71130DB4AD),
-        t: GF255e::w64be(0x2375E8119918E929, 0x03ADCBE22101F311,
-                         0x853223D7F44E59F2, 0x4D0A213B4402088D),
-    },
+    GF255e::w64be(0x70EC8E896A9E26BB, 0x691B44636A4256DB,
+                  0x3400B87117DA45FB, 0x4318414607C6AB0F),
+    GF255e::w64be(0x05B837449A5D608E, 0xECF205B837449A5D,
+                  0x608EECF205B83744, 0x9A5D608EECF20278),
+    GF255e::w64be(0x2375E8119918E929, 0x03ADCBE22101F311,
+                  0x853223D7F44E59F2, 0x4D0A213B4402088D),
     // B * 5
-    PointAffineExtended {
-        e: GF255e::w64be(0x3A3E1251980D6493, 0x74304444BCDB09C0,
-                         0x1BD8155773C41197, 0xD23D2C8BE875C86A),
-        u: GF255e::w64be(0x185034D250F768D7, 0x5866F1F8B35FB70C,
-                         0xE40F8B8BC44A0C63, 0x1F2B6B08DA5B43EE),
-        t: GF255e::w64be(0x3E3560E7BB5DF4DA, 0x8982206A724B43CC,
-                         0xE00C1E20C1C66FF4, 0xC91927493D361051),
-    },
+    GF255e::w64be(0x45C1EDAE67F29B6C, 0x8BCFBBBB4324F63F,
+                  0xE427EAA88C3BEE68, 0x2DC2D3741789EEBB),
+    GF255e::w64be(0x67AFCB2DAF089728, 0xA7990E074CA048F3,
+                  0x1BF074743BB5F39C, 0xE0D494F725A47337),
+    GF255e::w64be(0x3E3560E7BB5DF4DA, 0x8982206A724B43CC,
+                  0xE00C1E20C1C66FF4, 0xC91927493D361051),
     // B * 6
-    PointAffineExtended {
-        e: GF255e::w64be(0x124FA9DF5844C804, 0x1673C5B96A6D2E2A,
-                         0xC712074807471E77, 0x643AD390229AD5F2),
-        u: GF255e::w64be(0x4FA6D8B6AFDDC92B, 0xA1AB0B9D98F35F00,
-                         0xBB4A410D263610A7, 0x0BD0C5F1F91D6B18),
-        t: GF255e::w64be(0x34F3562FDA88753E, 0xD7991971E94A460E,
-                         0x76ED99CCAEE9D26F, 0x355D1614AEB11ACD),
-    },
+    GF255e::w64be(0x6DB05620A7BB37FB, 0xE98C3A469592D1D5,
+                  0x38EDF8B7F8B8E188, 0x9BC52C6FDD64E133),
+    GF255e::w64be(0x30592749502236D4, 0x5E54F462670CA0FF,
+                  0x44B5BEF2D9C9EF58, 0xF42F3A0E06E24C0D),
+    GF255e::w64be(0x34F3562FDA88753E, 0xD7991971E94A460E,
+                  0x76ED99CCAEE9D26F, 0x355D1614AEB11ACD),
     // B * 7
-    PointAffineExtended {
-        e: GF255e::w64be(0x4C5C3FA382AAF7AC, 0xC36F69694BFC77E7,
-                         0xD86308C5232C88D0, 0xE8D6CBC7678229FB),
-        u: GF255e::w64be(0x6DD8CDFA520AED5A, 0x350914B3EE64BF7F,
-                         0xB885C9D1EB4CC9E1, 0x7EB52414159EF4EA),
-        t: GF255e::w64be(0x56861F4D0A217C1C, 0x0957AB7A60AC1520,
-                         0x818C73930C2A0899, 0x59DAD0E634C75544),
-    },
+    GF255e::w64be(0x4C5C3FA382AAF7AC, 0xC36F69694BFC77E7,
+                  0xD86308C5232C88D0, 0xE8D6CBC7678229FB),
+    GF255e::w64be(0x6DD8CDFA520AED5A, 0x350914B3EE64BF7F,
+                  0xB885C9D1EB4CC9E1, 0x7EB52414159EF4EA),
+    GF255e::w64be(0x56861F4D0A217C1C, 0x0957AB7A60AC1520,
+                  0x818C73930C2A0899, 0x59DAD0E634C75544),
     // B * 8
-    PointAffineExtended {
-        e: GF255e::w64be(0x2C922B2CB2A6146C, 0x86AD97E42FD5BA49,
-                         0xAD881FFB515E9113, 0x4E11C11353187B28),
-        u: GF255e::w64be(0x4766315BFA2E63E5, 0xC54D8F471F778CE9,
-                         0x0706B8B95DEDFC87, 0x99DA8C93EB513A8B),
-        t: GF255e::w64be(0x532698BCB811270A, 0xF3C520B8FCA311FD,
-                         0x89B68A9C8B0077A8, 0x4D9B8F5639729F9A),
-    },
+    GF255e::w64be(0x536DD4D34D59EB93, 0x7952681BD02A45B6,
+                  0x5277E004AEA16EEC, 0xB1EE3EECACE73BFD),
+    GF255e::w64be(0x3899CEA405D19C1A, 0x3AB270B8E0887316,
+                  0xF8F94746A2120378, 0x6625736C14AE7C9A),
+    GF255e::w64be(0x532698BCB811270A, 0xF3C520B8FCA311FD,
+                  0x89B68A9C8B0077A8, 0x4D9B8F5639729F9A),
     // B * 9
-    PointAffineExtended {
-        e: GF255e::w64be(0x2289F3ABFA293050, 0x55B6D3E8852C1B0B,
-                         0x675E5BCC38AA1784, 0x6FB66DF6B52FBCC4),
-        u: GF255e::w64be(0x6957FDFF940E4159, 0x498C7D8B01F68C40,
-                         0x27E9084D132CCAC1, 0xA84A27A9D0A08E61),
-        t: GF255e::w64be(0x431DA1A672CB2D3C, 0x56244B8A32B42796,
-                         0x76CA668F88C812F9, 0x8D2F2DE6815F2EFF),
-    },
+    GF255e::w64be(0x5D760C5405D6CFAF, 0xAA492C177AD3E4F4,
+                  0x98A1A433C755E87B, 0x904992094ACFFA61),
+    GF255e::w64be(0x16A802006BF1BEA6, 0xB6738274FE0973BF,
+                  0xD816F7B2ECD3353E, 0x57B5D8562F5F28C4),
+    GF255e::w64be(0x431DA1A672CB2D3C, 0x56244B8A32B42796,
+                  0x76CA668F88C812F9, 0x8D2F2DE6815F2EFF),
     // B * 10
-    PointAffineExtended {
-        e: GF255e::w64be(0x30290CF961B06E3A, 0xAF5539730762C505,
-                         0x803FC1C6AAD5CD46, 0x8EB44683ACC048BE),
-        u: GF255e::w64be(0x7B37113C916F803C, 0x4AA37581A9B6AD5E,
-                         0x55838146CC140A37, 0x3AA366BBB889903E),
-        t: GF255e::w64be(0x252DC97C189ECFD9, 0x9EDDA370E828C438,
-                         0xC70EAC518AE5C163, 0xD912EBC4E1C6283E),
-    },
+    GF255e::w64be(0x30290CF961B06E3A, 0xAF5539730762C505,
+                  0x803FC1C6AAD5CD46, 0x8EB44683ACC048BE),
+    GF255e::w64be(0x7B37113C916F803C, 0x4AA37581A9B6AD5E,
+                  0x55838146CC140A37, 0x3AA366BBB889903E),
+    GF255e::w64be(0x252DC97C189ECFD9, 0x9EDDA370E828C438,
+                  0xC70EAC518AE5C163, 0xD912EBC4E1C6283E),
     // B * 11
-    PointAffineExtended {
-        e: GF255e::w64be(0x467C84CA2424A548, 0x6F385F29F643AF23,
-                         0x09DF0EB0A3919A65, 0x38A7E99599D93A3B),
-        u: GF255e::w64be(0x158521078CD1F209, 0x8C133221E772B327,
-                         0x65CF6B9CAB741725, 0xA9A8911D864E7F82),
-        t: GF255e::w64be(0x5D4A07E9BC1F036B, 0xC3FC1F026C5406EA,
-                         0xFAE4DC5553E938EB, 0x41583C9A8F92D685),
-    },
+    GF255e::w64be(0x467C84CA2424A548, 0x6F385F29F643AF23,
+                  0x09DF0EB0A3919A65, 0x38A7E99599D93A3B),
+    GF255e::w64be(0x158521078CD1F209, 0x8C133221E772B327,
+                  0x65CF6B9CAB741725, 0xA9A8911D864E7F82),
+    GF255e::w64be(0x5D4A07E9BC1F036B, 0xC3FC1F026C5406EA,
+                  0xFAE4DC5553E938EB, 0x41583C9A8F92D685),
     // B * 12
-    PointAffineExtended {
-        e: GF255e::w64be(0x66FF84AF5A9F7719, 0x4B3B87C8238DA4B1,
-                         0x06E6D0CF8DC7807E, 0xA49A13F883BF7B93),
-        u: GF255e::w64be(0x67E65CF7E1787343, 0x53EF35932E1297EB,
-                         0xFB902D6A3EF5D5E0, 0xE4C1C725087640AA),
-        t: GF255e::w64be(0x2213A3D93959DA85, 0x4742F3CB3DEB52CB,
-                         0xAE5BB5318E506208, 0x4203ACE2FF9309B4),
-    },
+    GF255e::w64be(0x19007B50A56088E6, 0xB4C47837DC725B4E,
+                  0xF9192F3072387F81, 0x5B65EC077C403B92),
+    GF255e::w64be(0x1819A3081E878CBC, 0xAC10CA6CD1ED6814,
+                  0x046FD295C10A2A1F, 0x1B3E38DAF789767B),
+    GF255e::w64be(0x2213A3D93959DA85, 0x4742F3CB3DEB52CB,
+                  0xAE5BB5318E506208, 0x4203ACE2FF9309B4),
     // B * 13
-    PointAffineExtended {
-        e: GF255e::w64be(0x6E7036BE9D4C885B, 0x3E7BB13DFFB6AD2D,
-                         0x22587604B5D2A716, 0xA99622782ED04723),
-        u: GF255e::w64be(0x17F96D76306A3580, 0x913200FCCD1396D8,
-                         0x67D0394FF2BFCB98, 0x90F8839881061965),
-        t: GF255e::w64be(0x0E2364672DB22F61, 0x028EBB02AB0AE384,
-                         0xE02396E9E43361F5, 0xF1F0EC984099DC93),
-    },
+    GF255e::w64be(0x118FC94162B377A4, 0xC1844EC2004952D2,
+                  0xDDA789FB4A2D58E9, 0x5669DD87D12F7002),
+    GF255e::w64be(0x68069289CF95CA7F, 0x6ECDFF0332EC6927,
+                  0x982FC6B00D403467, 0x6F077C677EF99DC0),
+    GF255e::w64be(0x0E2364672DB22F61, 0x028EBB02AB0AE384,
+                  0xE02396E9E43361F5, 0xF1F0EC984099DC93),
     // B * 14
-    PointAffineExtended {
-        e: GF255e::w64be(0x74C367ABF8A08989, 0x069708CC706DD30D,
-                         0xA59973DD5CB6D116, 0xC6C60BB30F2521F0),
-        u: GF255e::w64be(0x42C8034547A6A04A, 0x7C6DAA970635E1C0,
-                         0xA016A6890D77E4E6, 0x05B49673D2AC4172),
-        t: GF255e::w64be(0x0C4AC28DE6AF9B7D, 0xE13C4A7639E5E234,
-                         0x41B211E505C5A659, 0x0266FAA875DEF4DC),
-    },
+    GF255e::w64be(0x0B3C9854075F7676, 0xF968F7338F922CF2,
+                  0x5A668C22A3492EE9, 0x3939F44CF0DA9535),
+    GF255e::w64be(0x3D37FCBAB8595FB5, 0x83925568F9CA1E3F,
+                  0x5FE95976F2881B19, 0xFA4B698C2D5375B3),
+    GF255e::w64be(0x0C4AC28DE6AF9B7D, 0xE13C4A7639E5E234,
+                  0x41B211E505C5A659, 0x0266FAA875DEF4DC),
     // B * 15
-    PointAffineExtended {
-        e: GF255e::w64be(0x1110D92782C497CD, 0x257B5FE5EE7E01D9,
-                         0x626226C09EA21055, 0x543AA085E86224A7),
-        u: GF255e::w64be(0x2F4CA2B6265D7456, 0x4AD1FA649FAE1F07,
-                         0x705D12571BF74984, 0x7FFA4AF719120727),
-        t: GF255e::w64be(0x0CCF7FF00D563132, 0xCC7CCE327009957D,
-                         0x54BD0CFFC1B29AC7, 0xB111F1B5F7C6525E),
-    },
+    GF255e::w64be(0x6EEF26D87D3B6832, 0xDA84A01A1181FE26,
+                  0x9D9DD93F615DEFAA, 0xABC55F7A179D927E),
+    GF255e::w64be(0x50B35D49D9A28BA9, 0xB52E059B6051E0F8,
+                  0x8FA2EDA8E408B67B, 0x8005B508E6EDAFFE),
+    GF255e::w64be(0x0CCF7FF00D563132, 0xCC7CCE327009957D,
+                  0x54BD0CFFC1B29AC7, 0xB111F1B5F7C6525E),
     // B * 16
-    PointAffineExtended {
-        e: GF255e::w64be(0x676824C9A296F053, 0x03D9F770D7F5F415,
-                         0xF8FAE043DB5120DD, 0x97DA44A024F31B2E),
-        u: GF255e::w64be(0x251A19311A6DB76E, 0x706D8A1F41E90ED8,
-                         0x15064C9132683177, 0x2D808316E1227049),
-        t: GF255e::w64be(0x2C8D5EC4B15D04AE, 0x7C16D8FF7BF95128,
-                         0x0DB49CC10C6EE0A8, 0x95191DCA9E05F91A),
-    },
+    GF255e::w64be(0x676824C9A296F053, 0x03D9F770D7F5F415,
+                  0xF8FAE043DB5120DD, 0x97DA44A024F31B2E),
+    GF255e::w64be(0x251A19311A6DB76E, 0x706D8A1F41E90ED8,
+                  0x15064C9132683177, 0x2D808316E1227049),
+    GF255e::w64be(0x2C8D5EC4B15D04AE, 0x7C16D8FF7BF95128,
+                  0x0DB49CC10C6EE0A8, 0x95191DCA9E05F91A),
 ];
 
-// Points i*(2^65)*B for i = 1 to 16, affine extended format
-static PRECOMP_B65: [PointAffineExtended; 16] = [
+// Points i*(2^30)*B for i = 1 to 16, affine extended format (e, u, t)
+static PRECOMP_B30: [GF255e; 48] = [
+    // (2^30)*B * 1
+    GF255e::w64be(0x13CA1147905FCBF5, 0x52326246403CA5BF,
+                  0x3C35D84AA762ECE3, 0x907DB8CBF42BC887),
+    GF255e::w64be(0x21807A9E869F9959, 0x1A5450AEA131BEFF,
+                  0xD8A529F6B8C7B090, 0x7CC2003EE88F4078),
+    GF255e::w64be(0x3AEE62CB93CED7F1, 0x7067AB25891EE3B5,
+                  0xF718381811963DB2, 0x73FBF78B8823C053),
+    // (2^30)*B * 2
+    GF255e::w64be(0x1F0B55F7538062C6, 0xF5F7EC08D23CBB26,
+                  0x9FDF60EC98F382F9, 0x085234005B2AB43E),
+    GF255e::w64be(0x2A01A7A66A64F8DE, 0x165DCC5F4ADC9ACF,
+                  0xC8364B4B5B081003, 0x93B71E8B59F69390),
+    GF255e::w64be(0x3B685E42E10E7D85, 0xA4740FCA9242B2B1,
+                  0xCB8F01643355CDCC, 0x4C40F18C5B63A979),
+    // (2^30)*B * 3
+    GF255e::w64be(0x20580EA099D82FC7, 0x392A3EFC5FB42AF4,
+                  0xE6DBF5BFBFA90AD6, 0x0A700BA2732E6D3B),
+    GF255e::w64be(0x344DC3902A2BB913, 0x3CD6D4F887D5ADBB,
+                  0x0D1F0F40860C8B79, 0xE696F91B6027E51B),
+    GF255e::w64be(0x5B06BAC6615CFE93, 0x121D9D81E43446B7,
+                  0x01B0E0FE346B8431, 0x4C0B7DC3E9389D91),
+    // (2^30)*B * 4
+    GF255e::w64be(0x035262D6FA42CCD9, 0x931C814DF00837A5,
+                  0xC4C14E9CCDB62641, 0xE72798BFE43FF79F),
+    GF255e::w64be(0x7F5A47C4B8A71462, 0xEA5542F0423A6B08,
+                  0x7D627151D46A1F28, 0x0ECCB2E2278F9787),
+    GF255e::w64be(0x40F104BED34B471B, 0xD6443D61DA82B80B,
+                  0xE3DDBBE02A015838, 0xCBA8747656E79C58),
+    // (2^30)*B * 5
+    GF255e::w64be(0x71C205F522D89932, 0x82D85463B52A35E6,
+                  0xA9100D1A84D2984B, 0xFA3DE32CCB7A9574),
+    GF255e::w64be(0x4CA23E185D27384C, 0x1118B84EFBABE26A,
+                  0x32A77CB45507DF64, 0x32EDBA4A0D03AA4B),
+    GF255e::w64be(0x7E407DF2A38A26C7, 0xB84215DB55AC3228,
+                  0xCA1887B16E532444, 0xBFCFC5A884A0529A),
+    // (2^30)*B * 6
+    GF255e::w64be(0x7B331EF6B0BB0807, 0xF996B645F02F7435,
+                  0x2A1FD6F2C3D03ED9, 0xFE3ADDEB0040571C),
+    GF255e::w64be(0x7BFDA5402A7099E1, 0x554EE5C206C34691,
+                  0x835EF867125662CE, 0xA09544EF1016424A),
+    GF255e::w64be(0x5619E82C5020A665, 0x208F3395E8B0B098,
+                  0x2CDCF267BD76607D, 0xF10534DCFB398915),
+    // (2^30)*B * 7
+    GF255e::w64be(0x3AAD0F388C740A4C, 0x5C2275E090803FF7,
+                  0xD5905F5975C11A6A, 0x7C8644BA3F31E86B),
+    GF255e::w64be(0x6489741694C2DB65, 0xAF6326F66B245EBA,
+                  0xBDAB7C7103D81CC4, 0xAC15C4E14810B01D),
+    GF255e::w64be(0x724D3E13C3B6EAB8, 0x055E3DDC866AEBA3,
+                  0x6324B89BD96935CE, 0xCAE36C5E76A80C0A),
+    // (2^30)*B * 8
+    GF255e::w64be(0x6ECA645765B3F184, 0xAC888AF902D3F2F6,
+                  0x23B990A9715300BD, 0xEAE77CD5A217B5D7),
+    GF255e::w64be(0x687C7F6805609029, 0x7DFB6BBCF4D4B95C,
+                  0x03FD10706E8EC9E3, 0x37DA5CC5DF7466C6),
+    GF255e::w64be(0x0A557BAA6263696D, 0x4ED35671F7B6DB07,
+                  0x6DDDF7B4D68A7534, 0xA44FD3085FE84D18),
+    // (2^30)*B * 9
+    GF255e::w64be(0x4D5A31F81E16CAFF, 0x4E475474481F6751,
+                  0x7707A1054E57DBAB, 0x228358287E4B16B5),
+    GF255e::w64be(0x1CF5388644F4CE58, 0x7E38C6B544AA249B,
+                  0xFAD21ABA6C967EB2, 0x5B1BA39F15E5BA43),
+    GF255e::w64be(0x183B4E113203FB02, 0x33591AA143EE1F0E,
+                  0xF41F3F8FF5B2D5E6, 0x3F1703B436F4194D),
+    // (2^30)*B * 10
+    GF255e::w64be(0x52897BFEAB1D3143, 0x28E16088AC8DD35A,
+                  0xEA6AC104B4377B37, 0x0A811568C23ED90B),
+    GF255e::w64be(0x002DE451776F7575, 0x3E060714E384BC65,
+                  0xE84AD604731B838E, 0x9AE461EC05877BB3),
+    GF255e::w64be(0x5FDCB9FB3F4C5797, 0x4046647612284F1C,
+                  0x542A5F62FD3D5C15, 0xDBEE341D80A8F52B),
+    // (2^30)*B * 11
+    GF255e::w64be(0x7B1E1E0BB13A0D6E, 0x2E6F086CE5352381,
+                  0xF3F02ECDB61A483C, 0xCFC498866CBD23AE),
+    GF255e::w64be(0x0385B60F3A5A829E, 0x4663742D210BCFBC,
+                  0xA7FC1E3D6835CE52, 0xC7DB9CBFAD8ED920),
+    GF255e::w64be(0x3CFEE0A952259507, 0xD0C22765111F323D,
+                  0x29C93C6A6818E347, 0xDDC8215D410F748E),
+    // (2^30)*B * 12
+    GF255e::w64be(0x440B9571A929A001, 0x616ADFF6E1A940B6,
+                  0x9D09F8A5348BF0A4, 0xF5C70615A2446EDD),
+    GF255e::w64be(0x1C34B1769CD9E8C0, 0x460D033431555AFF,
+                  0x8F3A5C73FE927246, 0xF1EFD63E64A23B70),
+    GF255e::w64be(0x2E6C853FDF78D4ED, 0xFBAE6180855FFB65,
+                  0x708D63C96ECE5F95, 0x76BE8AA8492971C8),
+    // (2^30)*B * 13
+    GF255e::w64be(0x3060A8FFD41ACB33, 0xBD87FEECB7B9BB70,
+                  0x687781C1CD697D56, 0x43D0702FEEDA9F23),
+    GF255e::w64be(0x098A2753C0DBF107, 0xE0407DAF679B0D54,
+                  0x9AEB5F577D172973, 0xEEEBCA9CDAC6A674),
+    GF255e::w64be(0x4CAC1DF8F2DD5B83, 0x833BAD3C72274AFD,
+                  0x3C87C94A681CC18A, 0xB54EC85B102F1B29),
+    // (2^30)*B * 14
+    GF255e::w64be(0x1F74F35992B895FB, 0x27E87DC21466BE9F,
+                  0x5B91677373AE781D, 0x07B29BD4692B324D),
+    GF255e::w64be(0x5621598564421391, 0x680C35679657B7D9,
+                  0x35C8698010EE5359, 0xB1367E5D176D57AE),
+    GF255e::w64be(0x132D657EED4666C6, 0xAF951851C14759B1,
+                  0x6F7B4359EFDC6B41, 0x226AE41DE0FE7D8B),
+    // (2^30)*B * 15
+    GF255e::w64be(0x42B8E1E2340C4287, 0x6802040565529D9F,
+                  0x49890999F86805A3, 0x8CA7E11E18A667E0),
+    GF255e::w64be(0x2FA5817BF1E95411, 0x07444FF660C223DB,
+                  0xA3CD06160A4F17D9, 0x0B25611A486A0DD3),
+    GF255e::w64be(0x5133112D58780265, 0x01553E2CF86C3AB4,
+                  0x49DF33855A03D435, 0xA05CF4F734DB0C34),
+    // (2^30)*B * 16
+    GF255e::w64be(0x2C431C1D74A7D3EE, 0x7984C9CC1F4B73CF,
+                  0x40EED2E1E791753A, 0xDE28AB433C184B7B),
+    GF255e::w64be(0x7C3481BB7E32FFDA, 0xC3BF689ACC092270,
+                  0xDF729EFA0C7134ED, 0x06F0E664D5BC69B5),
+    GF255e::w64be(0x1A0A913F0152C5C0, 0xD723AE975F7B4D00,
+                  0x3D51AA24984B9AFC, 0xBD18C0E8BD385F52),
+];
+
+// Points i*(2^65)*B for i = 1 to 16, affine extended format (e, u, t)
+static PRECOMP_B65: [GF255e; 48] = [
     // (2^65)*B * 1
-    PointAffineExtended {
-        e: GF255e::w64be(0x6CE0B77B634A53B5, 0xAB3BAC1AB41DD08C,
-                         0x4629856EF94734AB, 0x886FF6278E08211F),
-        u: GF255e::w64be(0x1B313D36A8A7626E, 0x395D2181E50A4384,
-                         0x415893549DE223FF, 0xAD5F8FBFC596FA71),
-        t: GF255e::w64be(0x6E78594A21A5AAD2, 0x48E8393CFF13EC0E,
-                         0x222B7C0CD599D9CB, 0x17E71DD1EB9D832B),
-    },
+    GF255e::w64be(0x131F48849CB5AC4A, 0x54C453E54BE22F73,
+                  0xB9D67A9106B8CB54, 0x779009D871F79606),
+    GF255e::w64be(0x64CEC2C957589D91, 0xC6A2DE7E1AF5BC7B,
+                  0xBEA76CAB621DDC00, 0x52A070403A68BCB4),
+    GF255e::w64be(0x6E78594A21A5AAD2, 0x48E8393CFF13EC0E,
+                  0x222B7C0CD599D9CB, 0x17E71DD1EB9D832B),
     // (2^65)*B * 2
-    PointAffineExtended {
-        e: GF255e::w64be(0x7521310F8DD93292, 0x8AA629F4CE6C2582,
-                         0xE4584C1E3417B3E6, 0x111922C72716A209),
-        u: GF255e::w64be(0x0BE56F359985D602, 0x5CD27D909976BFE7,
-                         0x4CA4C049A5E65CF4, 0x2B7C2F71889E3F33),
-        t: GF255e::w64be(0x40534B306985620E, 0x6C805A5DABAECD17,
-                         0xC9233D8219ECC70E, 0xC699D8CD1BE2027B),
-    },
+    GF255e::w64be(0x0ADECEF07226CD6D, 0x7559D60B3193DA7D,
+                  0x1BA7B3E1CBE84C19, 0xEEE6DD38D8E9151C),
+    GF255e::w64be(0x741A90CA667A29FD, 0xA32D826F66894018,
+                  0xB35B3FB65A19A30B, 0xD483D08E776177F2),
+    GF255e::w64be(0x40534B306985620E, 0x6C805A5DABAECD17,
+                  0xC9233D8219ECC70E, 0xC699D8CD1BE2027B),
     // (2^65)*B * 3
-    PointAffineExtended {
-        e: GF255e::w64be(0x390940AD8D0885BF, 0x7B11CD4B6C9CC38D,
-                         0x5A40972FCDA92791, 0x33F6746ED6A45A0E),
-        u: GF255e::w64be(0x098D3AB90B09C2B4, 0x0519A68AAB4295EB,
-                         0xAF41508342D7801D, 0x4A504A5DED61CB7F),
-        t: GF255e::w64be(0x41A590927B5F6FD7, 0x0696A39545C181DE,
-                         0x92D534263FFE78C9, 0xA06F9DAD59A456C6),
-    },
+    GF255e::w64be(0x390940AD8D0885BF, 0x7B11CD4B6C9CC38D,
+                  0x5A40972FCDA92791, 0x33F6746ED6A45A0E),
+    GF255e::w64be(0x098D3AB90B09C2B4, 0x0519A68AAB4295EB,
+                  0xAF41508342D7801D, 0x4A504A5DED61CB7F),
+    GF255e::w64be(0x41A590927B5F6FD7, 0x0696A39545C181DE,
+                  0x92D534263FFE78C9, 0xA06F9DAD59A456C6),
     // (2^65)*B * 4
-    PointAffineExtended {
-        e: GF255e::w64be(0x10D60536FA934AC1, 0xBD9A0206C0DF4A3B,
-                         0xEADD9BBED6E7A570, 0x6C4E581C32A76153),
-        u: GF255e::w64be(0x3540EB32AA6E2C23, 0x3B845EF3AFAD3191,
-                         0x5A0FCD3AE1067F08, 0xD98BB32E81B4D89F),
-        t: GF255e::w64be(0x6470D11011381CFF, 0x893FFC0CA3CB3C98,
-                         0x4563C7AD47CE6A39, 0x1D5909B1A76336E1),
-    },
+    GF255e::w64be(0x6F29FAC9056CB53E, 0x4265FDF93F20B5C4,
+                  0x1522644129185A8F, 0x93B1A7E3CD5855D2),
+    GF255e::w64be(0x4ABF14CD5591D3DC, 0xC47BA10C5052CE6E,
+                  0xA5F032C51EF980F7, 0x26744CD17E4ADE86),
+    GF255e::w64be(0x6470D11011381CFF, 0x893FFC0CA3CB3C98,
+                  0x4563C7AD47CE6A39, 0x1D5909B1A76336E1),
     // (2^65)*B * 5
-    PointAffineExtended {
-        e: GF255e::w64be(0x742236A2B9985165, 0x9AE9B0736E87C51E,
-                         0x74427A8818227B9E, 0x648443E48591C275),
-        u: GF255e::w64be(0x4B36B3BE374E74CB, 0x9DD36D925FB45810,
-                         0x695C5863633AC0BB, 0xDB2EB15DD80EB7AB),
-        t: GF255e::w64be(0x7563AAD0685E3293, 0x52217A6F3280BAD3,
-                         0xBCF6E190CBC99BC3, 0x3B02030497F19A1B),
-    },
+    GF255e::w64be(0x742236A2B9985165, 0x9AE9B0736E87C51E,
+                  0x74427A8818227B9E, 0x648443E48591C275),
+    GF255e::w64be(0x4B36B3BE374E74CB, 0x9DD36D925FB45810,
+                  0x695C5863633AC0BB, 0xDB2EB15DD80EB7AB),
+    GF255e::w64be(0x7563AAD0685E3293, 0x52217A6F3280BAD3,
+                  0xBCF6E190CBC99BC3, 0x3B02030497F19A1B),
     // (2^65)*B * 6
-    PointAffineExtended {
-        e: GF255e::w64be(0x637BA56A42C4587D, 0x9318569D6BC1A5D5,
-                         0x748A8C77D6669E2A, 0xD8AD585D0C14DC83),
-        u: GF255e::w64be(0x143CF8A090ACB085, 0x0C0776C9F6ED32DE,
-                         0x763067186E58108F, 0x2473D6DB1425C001),
-        t: GF255e::w64be(0x2C301B6BCC1F09C1, 0x3A3345F98418DD26,
-                         0xDE3B04BA9040AF87, 0x73CDF9E505579C38),
-    },
+    GF255e::w64be(0x637BA56A42C4587D, 0x9318569D6BC1A5D5,
+                  0x748A8C77D6669E2A, 0xD8AD585D0C14DC83),
+    GF255e::w64be(0x143CF8A090ACB085, 0x0C0776C9F6ED32DE,
+                  0x763067186E58108F, 0x2473D6DB1425C001),
+    GF255e::w64be(0x2C301B6BCC1F09C1, 0x3A3345F98418DD26,
+                  0xDE3B04BA9040AF87, 0x73CDF9E505579C38),
     // (2^65)*B * 7
-    PointAffineExtended {
-        e: GF255e::w64be(0x5C780EAA96A1BB91, 0x1094A46B6F56FA43,
-                         0x0E16666D8273B21D, 0xE14526AA9D051B56),
-        u: GF255e::w64be(0x7EE7B8C1D61C83DD, 0xBAC06821F2BF788C,
-                         0x33088969E8FB612B, 0xE95E218127D26209),
-        t: GF255e::w64be(0x72AB912B16C33383, 0x617E1C89A1A25303,
-                         0x624FFDB35FA59240, 0x0474E6971F3502A9),
-    },
+    GF255e::w64be(0x5C780EAA96A1BB91, 0x1094A46B6F56FA43,
+                  0x0E16666D8273B21D, 0xE14526AA9D051B56),
+    GF255e::w64be(0x7EE7B8C1D61C83DD, 0xBAC06821F2BF788C,
+                  0x33088969E8FB612B, 0xE95E218127D26209),
+    GF255e::w64be(0x72AB912B16C33383, 0x617E1C89A1A25303,
+                  0x624FFDB35FA59240, 0x0474E6971F3502A9),
     // (2^65)*B * 8
-    PointAffineExtended {
-        e: GF255e::w64be(0x6B3865BE473732FF, 0xE95C514D17DD5343,
-                         0xD6C684EDF26076D9, 0xE800A094D67CC3ED),
-        u: GF255e::w64be(0x235872299B5B142E, 0x34DFEFB2A6C39FFC,
-                         0x3260DA08A5D337CB, 0x4C033B2301944CB8),
-        t: GF255e::w64be(0x2961CB37E34C35A1, 0x7B1EF0DEBBFAA0EE,
-                         0x08AA04266FC23C15, 0x439324FCD04090FB),
-    },
+    GF255e::w64be(0x6B3865BE473732FF, 0xE95C514D17DD5343,
+                  0xD6C684EDF26076D9, 0xE800A094D67CC3ED),
+    GF255e::w64be(0x235872299B5B142E, 0x34DFEFB2A6C39FFC,
+                  0x3260DA08A5D337CB, 0x4C033B2301944CB8),
+    GF255e::w64be(0x2961CB37E34C35A1, 0x7B1EF0DEBBFAA0EE,
+                  0x08AA04266FC23C15, 0x439324FCD04090FB),
     // (2^65)*B * 9
-    PointAffineExtended {
-        e: GF255e::w64be(0x32138C48916B15C7, 0xF8815AEC9C0105B4,
-                         0xDD56EA4894B8F6C1, 0xE7847250A19EF549),
-        u: GF255e::w64be(0x07DF0CC5D7C9E88D, 0xADD356D1CA14E352,
-                         0x53193A718D75331F, 0x6742B67C6086DF92),
-        t: GF255e::w64be(0x713B783B3766078D, 0x0D31937E03003B68,
-                         0x643500CDE6FADF0D, 0x5C9C41C3B8594D9B),
-    },
+    GF255e::w64be(0x32138C48916B15C7, 0xF8815AEC9C0105B4,
+                  0xDD56EA4894B8F6C1, 0xE7847250A19EF549),
+    GF255e::w64be(0x07DF0CC5D7C9E88D, 0xADD356D1CA14E352,
+                  0x53193A718D75331F, 0x6742B67C6086DF92),
+    GF255e::w64be(0x713B783B3766078D, 0x0D31937E03003B68,
+                  0x643500CDE6FADF0D, 0x5C9C41C3B8594D9B),
     // (2^65)*B * 10
-    PointAffineExtended {
-        e: GF255e::w64be(0x5C9329786A90B198, 0x83A3CE92BEFEC84E,
-                         0x4FD5981D24E25FBE, 0x25F90BCEB299A5D0),
-        u: GF255e::w64be(0x79E82E420C17C457, 0x3F6064CC7E287D25,
-                         0x476A1D01EBBFE2BB, 0x7982C54051C4DF08),
-        t: GF255e::w64be(0x1813C6ED70DAFA38, 0x27984BF87B6F0AD1,
-                         0x73165189E2EF99F8, 0x8CE01EA2E8B54114),
-    },
+    GF255e::w64be(0x5C9329786A90B198, 0x83A3CE92BEFEC84E,
+                  0x4FD5981D24E25FBE, 0x25F90BCEB299A5D0),
+    GF255e::w64be(0x79E82E420C17C457, 0x3F6064CC7E287D25,
+                  0x476A1D01EBBFE2BB, 0x7982C54051C4DF08),
+    GF255e::w64be(0x1813C6ED70DAFA38, 0x27984BF87B6F0AD1,
+                  0x73165189E2EF99F8, 0x8CE01EA2E8B54114),
     // (2^65)*B * 11
-    PointAffineExtended {
-        e: GF255e::w64be(0x4515BBA1AEAFD937, 0x8D0D667D16879C64,
-                         0x383BFB84CDDA791E, 0x7CAD33020884167D),
-        u: GF255e::w64be(0x3CC8BC3168B5A376, 0xB97069DD65593890,
-                         0x854CBABF2D02F041, 0x00FF128613403E58),
-        t: GF255e::w64be(0x058DA5FED462C39D, 0x206DA25D9FE2783E,
-                         0xF8F2F98E5BEF4381, 0xC303EBB8F65D98BA),
-    },
+    GF255e::w64be(0x4515BBA1AEAFD937, 0x8D0D667D16879C64,
+                  0x383BFB84CDDA791E, 0x7CAD33020884167D),
+    GF255e::w64be(0x3CC8BC3168B5A376, 0xB97069DD65593890,
+                  0x854CBABF2D02F041, 0x00FF128613403E58),
+    GF255e::w64be(0x058DA5FED462C39D, 0x206DA25D9FE2783E,
+                  0xF8F2F98E5BEF4381, 0xC303EBB8F65D98BA),
     // (2^65)*B * 12
-    PointAffineExtended {
-        e: GF255e::w64be(0x3E658213D95C2805, 0x68592F914D7E5167,
-                         0x4F20F40E6D616E5E, 0x7118E3577FDDE52D),
-        u: GF255e::w64be(0x51CBB2B65B751D79, 0x23447D42F7311FA5,
-                         0xA50B5985163B51DB, 0x3688782C6588D284),
-        t: GF255e::w64be(0x60570F440CB85A8A, 0x15EB451E43025B6A,
-                         0xDC1EF290D77A0305, 0x877FB541EB5BEC17),
-    },
+    GF255e::w64be(0x419A7DEC26A3D7FA, 0x97A6D06EB281AE98,
+                  0xB0DF0BF1929E91A1, 0x8EE71CA88021D1F8),
+    GF255e::w64be(0x2E344D49A48AE286, 0xDCBB82BD08CEE05A,
+                  0x5AF4A67AE9C4AE24, 0xC97787D39A76E4A1),
+    GF255e::w64be(0x60570F440CB85A8A, 0x15EB451E43025B6A,
+                  0xDC1EF290D77A0305, 0x877FB541EB5BEC17),
     // (2^65)*B * 13
-    PointAffineExtended {
-        e: GF255e::w64be(0x40255DC81F644B88, 0x3CA545A989E728B3,
-                         0x0DAC5E2EBE8D1017, 0xBF9758CD45295FBE),
-        u: GF255e::w64be(0x052051EDAFC87131, 0xAA36C89F8D5B502A,
-                         0xFDEE555C9009703F, 0x6AF277E67A9FAA68),
-        t: GF255e::w64be(0x50C64067319D2237, 0x0F6D233DC4F2C4BA,
-                         0x9B85D45C9AA3A8E1, 0xDED77C4486AAB04C),
-    },
+    GF255e::w64be(0x40255DC81F644B88, 0x3CA545A989E728B3,
+                  0x0DAC5E2EBE8D1017, 0xBF9758CD45295FBE),
+    GF255e::w64be(0x052051EDAFC87131, 0xAA36C89F8D5B502A,
+                  0xFDEE555C9009703F, 0x6AF277E67A9FAA68),
+    GF255e::w64be(0x50C64067319D2237, 0x0F6D233DC4F2C4BA,
+                  0x9B85D45C9AA3A8E1, 0xDED77C4486AAB04C),
     // (2^65)*B * 14
-    PointAffineExtended {
-        e: GF255e::w64be(0x631EFE8EF7F8E0F4, 0x8E7CF5FB0130A4FF,
-                         0x52126D4376848E4E, 0x13D6BB104910DE30),
-        u: GF255e::w64be(0x7182E92FA95620EB, 0x214282B022098B86,
-                         0xF694DF6ED62219A0, 0x86A494FC08EB56DD),
-        t: GF255e::w64be(0x136A3753275A04FE, 0x2F8383D036FFDEC3,
-                         0x6E06A2EFFBF79614, 0x8A96C7C2F4D51B6A),
-    },
+    GF255e::w64be(0x1CE1017108071F0B, 0x71830A04FECF5B00,
+                  0xADED92BC897B71B1, 0xEC2944EFB6EED8F5),
+    GF255e::w64be(0x0E7D16D056A9DF14, 0xDEBD7D4FDDF67479,
+                  0x096B209129DDE65F, 0x795B6B03F7146048),
+    GF255e::w64be(0x136A3753275A04FE, 0x2F8383D036FFDEC3,
+                  0x6E06A2EFFBF79614, 0x8A96C7C2F4D51B6A),
     // (2^65)*B * 15
-    PointAffineExtended {
-        e: GF255e::w64be(0x09C0518DA671868A, 0xBF13A51C8C3DB802,
-                         0x533027C62A4254F0, 0x714774712F78D8DC),
-        u: GF255e::w64be(0x406E88577206C6C4, 0xEDF6131ABB08D620,
-                         0xAE53B9A6D617E037, 0xD25E4076E71417FD),
-        t: GF255e::w64be(0x7A35DA9A106BD4A6, 0x69CB583FD3DDA8C2,
-                         0x5FD6950193780470, 0xA7B19AB7E5261DBE),
-    },
+    GF255e::w64be(0x09C0518DA671868A, 0xBF13A51C8C3DB802,
+                  0x533027C62A4254F0, 0x714774712F78D8DC),
+    GF255e::w64be(0x406E88577206C6C4, 0xEDF6131ABB08D620,
+                  0xAE53B9A6D617E037, 0xD25E4076E71417FD),
+    GF255e::w64be(0x7A35DA9A106BD4A6, 0x69CB583FD3DDA8C2,
+                  0x5FD6950193780470, 0xA7B19AB7E5261DBE),
     // (2^65)*B * 16
-    PointAffineExtended {
-        e: GF255e::w64be(0x0DA857B86203938C, 0xA8D3D5EBA8F300F7,
-                         0x16B77AD03CBC9CE8, 0xB7E60EBD3E152D96),
-        u: GF255e::w64be(0x7B916A823C090D35, 0x6CB90D1DDFBA601C,
-                         0x1ADF4CFE82DAF6AB, 0x7D37BBB6D0781C73),
-        t: GF255e::w64be(0x78BE6830E382EC23, 0xAA62937A623721E5,
-                         0x75D85076E298321B, 0xFE1CAB3D1875E47C),
-    },
+    GF255e::w64be(0x7257A8479DFC6C73, 0x572C2A14570CFF08,
+                  0xE948852FC3436317, 0x4819F142C1EA898F),
+    GF255e::w64be(0x046E957DC3F6F2CA, 0x9346F2E220459FE3,
+                  0xE520B3017D250954, 0x82C844492F879AB2),
+    GF255e::w64be(0x78BE6830E382EC23, 0xAA62937A623721E5,
+                  0x75D85076E298321B, 0xFE1CAB3D1875E47C),
 ];
 
-// Points i*(2^130)*B for i = 1 to 16, affine extended format
-static PRECOMP_B130: [PointAffineExtended; 16] = [
+// Points i*(2^95)*B for i = 1 to 16, affine extended format (e, u, t)
+static PRECOMP_B95: [GF255e; 48] = [
+    // (2^95)*B * 1
+    GF255e::w64be(0x064AA342C59C0DA0, 0xFAA44349B6734FEB,
+                  0xD30B1C84CDE9765C, 0xB766DECCD7834FF7),
+    GF255e::w64be(0x119D5D1A55EC18E7, 0x28C31FF060305E40,
+                  0xFD06B4B9CEDAC228, 0x7ACD061D37C3D1D6),
+    GF255e::w64be(0x0DD8CA46CB20E0DD, 0xE43FA70510BFE509,
+                  0xECE63FBCDBED83DA, 0x926FC4E7B0289F0D),
+    // (2^95)*B * 2
+    GF255e::w64be(0x78FC954AD8D52006, 0x44C3AEC51F2964F2,
+                  0xC312AE3005158590, 0x18F98B63350A8752),
+    GF255e::w64be(0x7AD8E671EE17C670, 0x3313ED7AAB04D140,
+                  0x91B847ED26B6CF94, 0x0BD0148E77CE6A5E),
+    GF255e::w64be(0x3297466638BBC445, 0xC8B94BDE93D3D902,
+                  0xCE649E0260C40EFC, 0x698A7797F808A2C7),
+    // (2^95)*B * 3
+    GF255e::w64be(0x547CD638F8AF40BB, 0x694F8ED466CC3C37,
+                  0x16E8ABF34D5A844C, 0x09409889B0E98F27),
+    GF255e::w64be(0x7D8AD1764CED7A3F, 0x809AF4FF01016ACA,
+                  0x6148669B1336FCEC, 0xDD11E9CDAF91678A),
+    GF255e::w64be(0x4B6AD6950FFA9CBA, 0x9B1CB599B9C46D93,
+                  0xE5BCC800B27EACD0, 0x9B72E257C7E326A2),
+    // (2^95)*B * 4
+    GF255e::w64be(0x613C8ECBF0A848FC, 0xA564AA42C0C97700,
+                  0x38702E4B6A61439F, 0x924CF8F624C8F8B9),
+    GF255e::w64be(0x63A19A4AC2160C37, 0x11ABC58D9EF7F4CE,
+                  0xBEB8664E3B46464B, 0xCFA2A379144F4EE3),
+    GF255e::w64be(0x62DC6DBA747D1E89, 0xA127C8EDEF4200D0,
+                  0x48056960613E4959, 0x6692BE27FA7A1351),
+    // (2^95)*B * 5
+    GF255e::w64be(0x25A6EC411F77CB78, 0xCF69A4B2A11A4469,
+                  0x6B4EB9B6E6D5AB02, 0x0B43FA3ECF550A24),
+    GF255e::w64be(0x03C98282001ADFA6, 0x4E9D1C740827ACB5,
+                  0x5D18C2E1F33671B6, 0xBE3D87A48426EBF8),
+    GF255e::w64be(0x7115EE66A4C38C36, 0xC01DBE749F798A3C,
+                  0x6B6A0A0C660809E0, 0x1953D2EF4892BC98),
+    // (2^95)*B * 6
+    GF255e::w64be(0x56AE980BD465F711, 0x396287DA54A2D27E,
+                  0x24B76B26F2E1DC5F, 0x084F3670B14FCFE3),
+    GF255e::w64be(0x68FE969D595DA557, 0xA5B443E88C8A995B,
+                  0xCA00F145963AEB78, 0xAD0F1CF8D4A2A9ED),
+    GF255e::w64be(0x5E30E5A5B1B6CF94, 0x0E53A7329BDB49DB,
+                  0x20E070005600A972, 0xA34F29143251910F),
+    // (2^95)*B * 7
+    GF255e::w64be(0x39DD38009BECF484, 0xCA293874749E2E36,
+                  0xEC50E5B1342F274F, 0x69D091B933C51A9D),
+    GF255e::w64be(0x61EA99C35B5C8714, 0x73EB7E911AFAB636,
+                  0x9592E0C84567F3E0, 0xD0490A8282D23DAC),
+    GF255e::w64be(0x653961AD8EA3C366, 0x657DED2350C83F99,
+                  0x13E2CD23184CD0F6, 0xEE17FED2BAD25EAE),
+    // (2^95)*B * 8
+    GF255e::w64be(0x2DDAB2D5C942F940, 0xB115E746EE5CE792,
+                  0xCB08BD516DAF829A, 0xAC1B5F5EC677FCD5),
+    GF255e::w64be(0x50E1C5CB1035BA92, 0xE61AA40355321930,
+                  0x769600329037F973, 0x2B462BE2026F26BF),
+    GF255e::w64be(0x0A74F122D11A9C92, 0x3DD40D9211FE4955,
+                  0x94C64564B78FC4EE, 0x0D609806ABA20D95),
+    // (2^95)*B * 9
+    GF255e::w64be(0x40DE5F775041CCAB, 0x73DD00B07B577D81,
+                  0x480C472D1D6FD5F9, 0x1B1FBEAECBC67597),
+    GF255e::w64be(0x7F172F027F7D714B, 0x7ADC900272DBFC13,
+                  0xF6FA872F9B5F7D84, 0xDFACD7B8DF4BD3FD),
+    GF255e::w64be(0x64A0666FB8EFAEFD, 0xE43A2E53396F5703,
+                  0x7B4423C03DA78BB2, 0x1A2ECB81239BA603),
+    // (2^95)*B * 10
+    GF255e::w64be(0x483FC465507787CD, 0x6EB1438B4C5E389C,
+                  0x8A501C2572F5F3FA, 0xA51D77D1040D73BE),
+    GF255e::w64be(0x67CA12B3AA2B3592, 0x9A613CA0B8D3CC03,
+                  0x65C3630287E6F750, 0xF143D0A2D8197B12),
+    GF255e::w64be(0x3CF43FC1A0AACBB2, 0x82DAE17DC8A1D998,
+                  0x77117A96356E0823, 0x66EA45588D44B244),
+    // (2^95)*B * 11
+    GF255e::w64be(0x7FFDB40231B7728D, 0xE467A2F1BBD605FC,
+                  0x9381100ED4068C36, 0xE9CA1BD79F88055A),
+    GF255e::w64be(0x4E531B74E4EDBC3B, 0xE53148AEAF77C797,
+                  0x636E3907AEE17932, 0xE828BF5DAFD9FBA0),
+    GF255e::w64be(0x3BFF8E3C1DCB6A65, 0x7E88F8DB430F4FCE,
+                  0xCF59614C8ED50CF4, 0x33176787CD1F7BC6),
+    // (2^95)*B * 12
+    GF255e::w64be(0x7DC8FDD36CEC85F6, 0x5EBABED548F85E28,
+                  0x7EDC5478A24A247C, 0x4FE60DBAC12937B5),
+    GF255e::w64be(0x14AAD6B599A78A1E, 0x59164ECA80DBC2BC,
+                  0xA8C14E4C401A8725, 0x66D1C4E7F84DBCB7),
+    GF255e::w64be(0x6AB96CBAD2CE2586, 0x5EAF9F16DAFF788D,
+                  0xB1D294C4F04CF4AD, 0x80FD38F7897A80E2),
+    // (2^95)*B * 13
+    GF255e::w64be(0x3BC04AFD4061401B, 0x306E5F900F95B543,
+                  0xA53CBD8CD928AFCF, 0x87DC988002BBDBAF),
+    GF255e::w64be(0x08D948612F474B91, 0xDF2876502B201BC0,
+                  0x448EC22797892CBB, 0x7C38EDBD8C233710),
+    GF255e::w64be(0x1CA7F5781A92A0F3, 0x979AD724BC3DA9A7,
+                  0x89FC8B82D263BE84, 0x17B5FC58F1356C46),
+    // (2^95)*B * 14
+    GF255e::w64be(0x20016465EBA3350C, 0x3FBE5678BAC454E5,
+                  0x5E2423EAACCF1E4D, 0xF264480132A6E2C3),
+    GF255e::w64be(0x0E4BBBA7186F99D8, 0x6F473508FECBBD48,
+                  0xF18F65CE65A3396F, 0x4945F8F959B9DE26),
+    GF255e::w64be(0x084DC6999483CA11, 0x92A119A8ABB18530,
+                  0x05FAF50A98B3E130, 0x19015F2BFA19C676),
+    // (2^95)*B * 15
+    GF255e::w64be(0x1CEBB3668FBDD74E, 0xDB22A366E6177378,
+                  0x13BC29C94FAF4AEF, 0x6E86AA974593CF40),
+    GF255e::w64be(0x772B639D97FD5F72, 0xC1EA09F19EA3A887,
+                  0xA8938E24467348C8, 0xA71611FBE0733F1D),
+    GF255e::w64be(0x3155981ADF087198, 0x67B9E52CE3D3192F,
+                  0x8590411621A233CB, 0x4271B7E0FC853D04),
+    // (2^95)*B * 16
+    GF255e::w64be(0x6F0F32C830EFFC50, 0x7362CB98477DB14B,
+                  0xD1A82D6F06C29AF5, 0xEAC2235CB6359790),
+    GF255e::w64be(0x0A5A0B095EEF3AE2, 0x708B748FFC2CF704,
+                  0x333F90D71213C5D6, 0xEB6C22C3F0A9107A),
+    GF255e::w64be(0x0E8698BBF8AD3D92, 0x70AF08850E90B07C,
+                  0xB4197DF3F7DA5D80, 0x2FC30C729DC8534D),
+];
+
+// Points i*(2^130)*B for i = 1 to 15 (odd only), affine extended format
+static PRECOMP_B130_ODD: [PointAffineExtended; 8] = [
     // (2^130)*B * 1
     PointAffineExtended {
         e: GF255e::w64be(0x06CB9DE70E47A525, 0x9FBB8D6BBC2E0657,
-                         0x04DA93AE9BE27159, 0x869B548FDE63606E),
+                          0x04DA93AE9BE27159, 0x869B548FDE63606E),
         u: GF255e::w64be(0x1E3A7692F3E02AB1, 0x2B998E19EE40437C,
-                         0xEF9A2E5ACD520CD9, 0x6A6F8767CAF58BCB),
+                          0xEF9A2E5ACD520CD9, 0x6A6F8767CAF58BCB),
         t: GF255e::w64be(0x6383719F46FAC0AE, 0x2FCDD9E72158E8D4,
-                         0xC1FEC4C782CB44C6, 0x12DCF83EC50BD952),
-    },
-    // (2^130)*B * 2
-    PointAffineExtended {
-        e: GF255e::w64be(0x69E07759E1492E65, 0xE12975DE1B6AA715,
-                         0x137941C5ADF1CAD3, 0xB08E5A163D54F276),
-        u: GF255e::w64be(0x1DE0359F8936CEEA, 0xAC5EBA85AFFFBCEB,
-                         0x64C33BBEA0416456, 0x97643EA7C28259E8),
-        t: GF255e::w64be(0x3A18C76587D69006, 0xF83CBCACE081587F,
-                         0xC8A5F632AB9427B0, 0xF32ACE061879EA59),
+                          0xC1FEC4C782CB44C6, 0x12DCF83EC50BD952),
     },
     // (2^130)*B * 3
     PointAffineExtended {
         e: GF255e::w64be(0x7F9D9B87A431B60A, 0x7A63055985C3FC53,
-                         0x9225D9C973152188, 0xA69544938C9DC498),
+                          0x9225D9C973152188, 0xA69544938C9DC498),
         u: GF255e::w64be(0x62BAF3EF3C842009, 0x4FA122A357313D72,
-                         0xC29D0227105E6338, 0x4A8F6858185A63C2),
+                          0xC29D0227105E6338, 0x4A8F6858185A63C2),
         t: GF255e::w64be(0x54C34BDF628B654A, 0xC5FE42DEAF33DE83,
-                         0x799295C376EF453F, 0x183908457B30E0BC),
-    },
-    // (2^130)*B * 4
-    PointAffineExtended {
-        e: GF255e::w64be(0x180B366A5F951D11, 0x6E7804AC92C3BE8D,
-                         0x8777F23BA9BA461C, 0x607C64DAEC32F903),
-        u: GF255e::w64be(0x37EDC360CFBBEDE2, 0xDCCCD3E1EF458EDC,
-                         0xEF697901DA783099, 0x17625F88FFC35397),
-        t: GF255e::w64be(0x515891835D836913, 0x62C64632720B072F,
-                         0x3E9CC11638D69625, 0x5F7FC0E7A0B94FB0),
+                          0x799295C376EF453F, 0x183908457B30E0BC),
     },
     // (2^130)*B * 5
     PointAffineExtended {
         e: GF255e::w64be(0x552022F75A7FF671, 0xA458CD165446291A,
-                         0x75DE8E82AE7AD735, 0xB5DA3AAFCEA3BDDC),
+                          0x75DE8E82AE7AD735, 0xB5DA3AAFCEA3BDDC),
         u: GF255e::w64be(0x282E209409ADD692, 0x6DDAC4AB9F7AE17C,
-                         0xEB86F24ADFCADBF5, 0x055D6CCDE9EC95DF),
+                          0xEB86F24ADFCADBF5, 0x055D6CCDE9EC95DF),
         t: GF255e::w64be(0x775F596632FB79E4, 0x541CE0C53EC38691,
-                         0x5AF736BE387EA15D, 0x60BA3A7F6B02F394),
-    },
-    // (2^130)*B * 6
-    PointAffineExtended {
-        e: GF255e::w64be(0x5EF32CC1B5A5952D, 0x66ECF43864D273CD,
-                         0xA45999A2258AEB93, 0x7C2346E4D222B565),
-        u: GF255e::w64be(0x7E4F46D5131E195C, 0xF406AD1FFA1ACD6B,
-                         0xB6FA24A8892C93FF, 0xBA9DA77EDCAD7528),
-        t: GF255e::w64be(0x3306A93BCA2FEDC4, 0xA68B3F0189B1BA23,
-                         0xEB5AD1F6B9C3F150, 0x85A61A2DEA698452),
+                          0x5AF736BE387EA15D, 0x60BA3A7F6B02F394),
     },
     // (2^130)*B * 7
     PointAffineExtended {
         e: GF255e::w64be(0x4830813F189FDCFE, 0x5E05B4C4DB704F5D,
-                         0xE9BDF6AD5FC76584, 0x70FD1203988BD912),
+                          0xE9BDF6AD5FC76584, 0x70FD1203988BD912),
         u: GF255e::w64be(0x372239482AEC172D, 0x6FB5672D05CA0B5B,
-                         0xC1293137B7F95D67, 0x9E343B6FEBEF1413),
+                          0xC1293137B7F95D67, 0x9E343B6FEBEF1413),
         t: GF255e::w64be(0x35266C9ACED8D90B, 0x21A50BBDCF12747E,
-                         0xF796A60E89BAA4F4, 0xEDC0FD9628A8DD36),
-    },
-    // (2^130)*B * 8
-    PointAffineExtended {
-        e: GF255e::w64be(0x303B08CF4D486C20, 0x5D86EBC524ED9795,
-                         0x27214239C8731082, 0x68EE4317D1F7E9CE),
-        u: GF255e::w64be(0x4E1CF6CCC48289F4, 0x7BFEE5167F928B59,
-                         0x0F110F3BEDDC580B, 0x21232B19EA446499),
-        t: GF255e::w64be(0x1DFD019EB5360B34, 0x94AAE19ECEC7737D,
-                         0x0834BAF860B519A9, 0x1768F10E04969A8C),
+                          0xF796A60E89BAA4F4, 0xEDC0FD9628A8DD36),
     },
     // (2^130)*B * 9
     PointAffineExtended {
-        e: GF255e::w64be(0x4262554CF57EA2FC, 0x2830FF4E2FBB9A1B,
-                         0x9259F250CE8DDF8F, 0xFA3E5E1F454A9789),
-        u: GF255e::w64be(0x6F671B022C83BC57, 0x24120A75934E696A,
-                         0x06134380E791A9D0, 0xFFFA0532A28FF940),
+        e: GF255e::w64be(0x3D9DAAB30A815D03, 0xD7CF00B1D04465E4,
+                          0x6DA60DAF31722070, 0x05C1A1E0BAB51F9C),
+        u: GF255e::w64be(0x1098E4FDD37C43A8, 0xDBEDF58A6CB19695,
+                          0xF9ECBC7F186E562F, 0x0005FACD5D6FBDE5),
         t: GF255e::w64be(0x03BBDFC635166005, 0x4CA31E3B83E29BB6,
-                         0xBB03E3FDF6E447C2, 0x0BE5ED639180368F),
-    },
-    // (2^130)*B * 10
-    PointAffineExtended {
-        e: GF255e::w64be(0x776F6C1C18E51DF5, 0x2970E4C0A4D753B1,
-                         0xBC5D29A73202BCE6, 0xE1B24ECCE93AA158),
-        u: GF255e::w64be(0x64ECAAC0EBA1A511, 0x108D5A1C5EC7534A,
-                         0x3EC320448D80BCA7, 0x0EE1B5003B071E37),
-        t: GF255e::w64be(0x4BC50BF7A3AC991A, 0x8C125FB0A13E6050,
-                         0xD00F9D216D74A32A, 0x10E500131535C514),
+                          0xBB03E3FDF6E447C2, 0x0BE5ED639180368F),
     },
     // (2^130)*B * 11
     PointAffineExtended {
-        e: GF255e::w64be(0x3622E7BF2A3899E8, 0x2C33E16E5D45B50A,
-                         0x31DC4E881F4F95D8, 0x10DC6E263EB40DBD),
-        u: GF255e::w64be(0x029CAFA5599B372A, 0xD51C733D4564D8F4,
-                         0x0BC92225712BA4D4, 0x6CC3477AD4AB70A1),
+        e: GF255e::w64be(0x49DD1840D5C76617, 0xD3CC1E91A2BA4AF5,
+                          0xCE23B177E0B06A27, 0xEF2391D9C14BA968),
+        u: GF255e::w64be(0x7D63505AA664C8D5, 0x2AE38CC2BA9B270B,
+                          0xF436DDDA8ED45B2B, 0x933CB8852B544684),
         t: GF255e::w64be(0x30F0D235E547B2AD, 0x396102BA67CD8FA6,
-                         0x84FD6E87816D4B31, 0x3D63011A6518ADF3),
-    },
-    // (2^130)*B * 12
-    PointAffineExtended {
-        e: GF255e::w64be(0x70F7A39B8561373F, 0x3F2A874D3EE0C99A,
-                         0xB3E38AE4779DEFF8, 0x5424663282E719F6),
-        u: GF255e::w64be(0x6E81F9FA7E661D8D, 0x41F420B5A91ED717,
-                         0x960067A5C064493E, 0xCB9E1D5CB7854025),
-        t: GF255e::w64be(0x797141D1E37DDC45, 0x4E40C5DCD5EB0507,
-                         0xFA5B99758B260B44, 0x96737B3BD1B3FF89),
+                          0x84FD6E87816D4B31, 0x3D63011A6518ADF3),
     },
     // (2^130)*B * 13
     PointAffineExtended {
         e: GF255e::w64be(0x4489AC6538239FA8, 0x87620DD6665947AC,
-                         0xC52014D6E24C4D0F, 0x3A2AA626DE84F742),
+                          0xC52014D6E24C4D0F, 0x3A2AA626DE84F742),
         u: GF255e::w64be(0x653EE371D2801E6A, 0x59F3D4C5BB3DFDCC,
-                         0xF94983893D4AABD6, 0x1A722773E489DDB8),
+                          0xF94983893D4AABD6, 0x1A722773E489DDB8),
         t: GF255e::w64be(0x6E8DE13723DFA5BC, 0x3AF72BF16ED6198C,
-                         0x336E96DD99975786, 0xA14B344A108032A6),
-    },
-    // (2^130)*B * 14
-    PointAffineExtended {
-        e: GF255e::w64be(0x0698AEC8D7B177EE, 0xE23DA12DBE2A729B,
-                         0x30C254D3EE996605, 0x5BDDDC0121EA7956),
-        u: GF255e::w64be(0x50E1BEE9AC402680, 0x216A1928595E868E,
-                         0x96FABF7744D22EC2, 0x460E164D09693F50),
-        t: GF255e::w64be(0x52BC8B51287FBDD0, 0x73999AF999779B03,
-                         0x3076D3BE8227BB81, 0x2EA3B4425FE17CBC),
+                          0x336E96DD99975786, 0xA14B344A108032A6),
     },
     // (2^130)*B * 15
     PointAffineExtended {
-        e: GF255e::w64be(0x67C8ED8C09C7A4DA, 0xC7562833544AC635,
-                         0x7269B6542711C087, 0x4DE169D233632097),
-        u: GF255e::w64be(0x5CE94782B63D2983, 0x2323BA05744FB271,
-                         0x5486463AAA3D41CD, 0x442C914C64C6EE61),
+        e: GF255e::w64be(0x18371273F6385B25, 0x38A9D7CCABB539CA,
+                          0x8D9649ABD8EE3F78, 0xB21E962DCC9C968E),
+        u: GF255e::w64be(0x2316B87D49C2D67C, 0xDCDC45FA8BB04D8E,
+                          0xAB79B9C555C2BE32, 0xBBD36EB39B38C8C4),
         t: GF255e::w64be(0x79B75334C85A090C, 0x4B8F046B40C3632A,
-                         0xFE575987C8449D15, 0x5E85E0F841CFEA05),
-    },
-    // (2^130)*B * 16
-    PointAffineExtended {
-        e: GF255e::w64be(0x5F00BEB6EDB8A088, 0xAFF58E0E6F53165A,
-                         0xB956B5A6669E52E3, 0xA1638BEC45B50B50),
-        u: GF255e::w64be(0x0F2ED8418B17674E, 0x9CAE33A6B5F9B94C,
-                         0x68337F979386B815, 0x20DDE2D9560BD063),
-        t: GF255e::w64be(0x2EED8F30CF10FA1C, 0xBB88653D342DE052,
-                         0x3721E53E5901899E, 0x42082E618690FF50),
-    },
-];
-
-// Points i*(2^195)*B for i = 1 to 16, affine extended format
-static PRECOMP_B195: [PointAffineExtended; 16] = [
-    // (2^195)*B * 1
-    PointAffineExtended {
-        e: GF255e::w64be(0x26FE2B2D2FF7C515, 0x4F9CCA6483A60AC4,
-                         0x05A13379CA5B1805, 0x259381D52FD3D48B),
-        u: GF255e::w64be(0x7A2058682117A352, 0x5A78F8FDAFE0F2B2,
-                         0x3FACF03027F2FE05, 0xC6C4EA52864B8022),
-        t: GF255e::w64be(0x6CF49CB73C1C85C0, 0x759EDBD5AA299C4A,
-                         0xD2369B352A0FAC70, 0x827479FBF869915D),
-    },
-    // (2^195)*B * 2
-    PointAffineExtended {
-        e: GF255e::w64be(0x26E11FA33F986A71, 0xFEFB94253EE54433,
-                         0x2F4C099F8F9811D4, 0xBEA01D24F6BA6D06),
-        u: GF255e::w64be(0x597FE7EC4E366C38, 0xCBC1DD8A3179B032,
-                         0xB043C24E23C52866, 0xE7A9C455FDCCE69F),
-        t: GF255e::w64be(0x5D82A3622AECDB76, 0x31EC395A62DF9B38,
-                         0xB52F9C48D79CEDB6, 0xF41D8A2928BB5A33),
-    },
-    // (2^195)*B * 3
-    PointAffineExtended {
-        e: GF255e::w64be(0x7A97A73E152AC3D0, 0x5D9FD304B83A88A9,
-                         0xE3C20E9FA8811C74, 0x9902C1E090F2D551),
-        u: GF255e::w64be(0x5D529C2B2E3222F2, 0xB0C0AEB839C2A9BB,
-                         0xDAC867CE0228990B, 0xEBF1C192782AD7E7),
-        t: GF255e::w64be(0x25F396E870747870, 0x4CC66CF8E7017825,
-                         0x8692B8050BB45ACF, 0xDF8E63928F1AE0C2),
-    },
-    // (2^195)*B * 4
-    PointAffineExtended {
-        e: GF255e::w64be(0x68BEB6AD6278C4C5, 0x23A615DE55EB285B,
-                         0x532E7F73C34493C0, 0x825E9E80D9017500),
-        u: GF255e::w64be(0x73E9DA1D7C583AB6, 0x880F0F9CA2B23DE9,
-                         0xD5179DCB398FE9E2, 0xE5AD1FDA050CE7CF),
-        t: GF255e::w64be(0x2F2A10845751514B, 0x55CA5A73E2FDED3F,
-                         0x56A385AC631A3736, 0x1BED8C4A161AD03A),
-    },
-    // (2^195)*B * 5
-    PointAffineExtended {
-        e: GF255e::w64be(0x1A980F7E359D5D64, 0xDD94B1823583A50F,
-                         0x39A98FB9520B23D9, 0xEF721415A10674B8),
-        u: GF255e::w64be(0x3FB05C6B656FCDE7, 0x3428954D0B0B6412,
-                         0x2B41B323457375B0, 0x81533FD0CED00FE0),
-        t: GF255e::w64be(0x1FA8E20753FBE8B0, 0x0156D1B1D6CF146F,
-                         0x3EB933A63E59FA2B, 0xD6A2CFBECD1FF35F),
-    },
-    // (2^195)*B * 6
-    PointAffineExtended {
-        e: GF255e::w64be(0x53505DC8D146C39F, 0xD1328954C1969616,
-                         0xCE6BBA92A647E0CA, 0xC32013800A7FA85F),
-        u: GF255e::w64be(0x1EEE7F4380019FB8, 0xC70C1F018B95875D,
-                         0xA6B25F5370FF8BED, 0xABECE8DEAA4DEFF3),
-        t: GF255e::w64be(0x35C68ADE3CAC8CA8, 0x5D617DE816798EB4,
-                         0x93B664F242B13EF8, 0xCC3FC741CC1E0562),
-    },
-    // (2^195)*B * 7
-    PointAffineExtended {
-        e: GF255e::w64be(0x203E41FE3594BCCC, 0xC95A3B2FA7918F82,
-                         0x023E52D8EE207D6F, 0x293F3FD57745E14A),
-        u: GF255e::w64be(0x1C54D437C147EB47, 0xDF748C1856292D78,
-                         0x8AF5B5BD4C9ADB58, 0xC2513D53CE5A6CD2),
-        t: GF255e::w64be(0x791ECB5E7F925E67, 0xB8E346F880AA5525,
-                         0xB56CC897BA7BA956, 0x02C3EA61A5ABCB56),
-    },
-    // (2^195)*B * 8
-    PointAffineExtended {
-        e: GF255e::w64be(0x5A50303BB7FBF10D, 0xA2654498E4A81FA1,
-                         0x9EAB45BEF1F6D3FE, 0x9E436CB767A86CB5),
-        u: GF255e::w64be(0x47EC89341C754A72, 0x23187D9C49399AB4,
-                         0x76396E28425429D3, 0x961441BFA4853698),
-        t: GF255e::w64be(0x00D090A5B2E0E163, 0x47DBD9D756A70427,
-                         0x4E7E59858CDEC91B, 0xB5B36F776AF04917),
-    },
-    // (2^195)*B * 9
-    PointAffineExtended {
-        e: GF255e::w64be(0x4E1EFB691EF8D7C0, 0x3ADC11E0F4D52DD6,
-                         0xD1492FB1E8EDE015, 0x1390F65E3B6C3E84),
-        u: GF255e::w64be(0x0C4E4B67E97A3F02, 0xB055E943E160FF52,
-                         0x899CA30F8A6C1157, 0x790DDCB656DA5EBB),
-        t: GF255e::w64be(0x5C4551BBBCA04267, 0x0E7DEA665667BD29,
-                         0x90F6162E6D8BF1FD, 0xE665E42E421C783F),
-    },
-    // (2^195)*B * 10
-    PointAffineExtended {
-        e: GF255e::w64be(0x0BBAE0E5BEFBB5CF, 0x433AC8B15317BE46,
-                         0x82E93F7DB218D2B4, 0x28CA2A1B76E757EA),
-        u: GF255e::w64be(0x44B8942C5DF07889, 0x7C80807D104B0670,
-                         0xEB725D50999A4399, 0x7CBAD6A204D1F6B9),
-        t: GF255e::w64be(0x3B052B97144BDDCC, 0x4584662C9819C28B,
-                         0x4555C3E786404CA2, 0x617C6A396D315D12),
-    },
-    // (2^195)*B * 11
-    PointAffineExtended {
-        e: GF255e::w64be(0x2CCB2CF7E40BF4D0, 0xD28F560EA8A29B73,
-                         0x200EE9E2631EC7C4, 0x0D101C917FFDE613),
-        u: GF255e::w64be(0x7DD81F0AD475BB65, 0xEB5423DB7543C3F6,
-                         0xB6A214969A98317F, 0x30FE96716E7DF796),
-        t: GF255e::w64be(0x69561B43851B3032, 0x76EEE28489A2673B,
-                         0x4ED760314652F82F, 0x6E9D90B85FC133E0),
-    },
-    // (2^195)*B * 12
-    PointAffineExtended {
-        e: GF255e::w64be(0x2DFA0BA127D42687, 0xB3A61F723EE958E7,
-                         0xA66737D8513DFDB2, 0x50C89E4AB1499911),
-        u: GF255e::w64be(0x60406418E0A8E484, 0xF6647FFFA6239BFD,
-                         0x0620628690F070A8, 0x041881DC4BB15593),
-        t: GF255e::w64be(0x3C01E53D24508710, 0x5F7FF4B10823ABA8,
-                         0xCC5BCAEE53A27045, 0xB186E710CF384958),
-    },
-    // (2^195)*B * 13
-    PointAffineExtended {
-        e: GF255e::w64be(0x0B0051552C1C58B5, 0x16210166F7E6E8DA,
-                         0x039A3283169BCBD8, 0xA54981754921B43D),
-        u: GF255e::w64be(0x03C8B0610E5DE932, 0xEDC81102A9A286D9,
-                         0x80A9A62960313C1E, 0x02A5C58CE250DF40),
-        t: GF255e::w64be(0x5C2FDF1BE72A0992, 0x220189A7901D370E,
-                         0x7F61E2E190853286, 0x9B656127329A1F5C),
-    },
-    // (2^195)*B * 14
-    PointAffineExtended {
-        e: GF255e::w64be(0x6021348E9D2BB8D8, 0xB7E063EA06740CDF,
-                         0x117438E7D83A2644, 0x1725A4D445249491),
-        u: GF255e::w64be(0x63F775224E36165F, 0x97D9FFD6286A6BD1,
-                         0x3498D65BDB7611FC, 0x2359C265188EE74D),
-        t: GF255e::w64be(0x534AFBC1B782F441, 0x6492A9AFA98D71BD,
-                         0xA31076307FE06CED, 0xD5B3AA1D5B583047),
-    },
-    // (2^195)*B * 15
-    PointAffineExtended {
-        e: GF255e::w64be(0x6C435D4A27D08486, 0xD35D4667B3E6947A,
-                         0x07778715A12C63DB, 0x66C6224B1937FD6E),
-        u: GF255e::w64be(0x5C69FCC38DA29629, 0xDD4D47FA083CC9BF,
-                         0x58F89E267B42BEA3, 0x14BD04EFD34FC573),
-        t: GF255e::w64be(0x0B9C09556A326820, 0x5A90BF07D1C9E81B,
-                         0x4F944F4CDD9551F4, 0x98A6F2B6623C4605),
-    },
-    // (2^195)*B * 16
-    PointAffineExtended {
-        e: GF255e::w64be(0x4DA95AF12CBA888E, 0x6217606AC5C899F0,
-                         0xB4BD88C5AC6C7FE8, 0xF4448E39173AD989),
-        u: GF255e::w64be(0x162581D9B675A4E1, 0xDA636B907FED771B,
-                         0x3E6A069F39FCEFCB, 0x805E028481B3D10D),
-        t: GF255e::w64be(0x02FA9D8FB083E563, 0xEEAA462F252FD554,
-                         0x44FDFE7C39061B8D, 0x52668A8902F702CE),
+                          0xFE575987C8449D15, 0x5E85E0F841CFEA05),
     },
 ];
 
@@ -2536,7 +2458,7 @@ mod tests {
 
     use super::{Point, Scalar, PrivateKey, PublicKey};
     use sha2::{Sha256, Digest};
-    use blake2::{Blake2s256};
+    use crate::blake2s::Blake2s256;
     use crate::field::GF255e;
 
     /* unused

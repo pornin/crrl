@@ -130,6 +130,8 @@ macro_rules! static_assert {
 pub mod backend;
 pub mod field;
 
+pub use backend::{Zu128, Zu256, Zu384};
+
 #[cfg(feature = "ed25519")]
 pub mod ed25519;
 
@@ -151,6 +153,9 @@ pub mod p256;
 #[cfg(feature = "secp256k1")]
 pub mod secp256k1;
 
+#[cfg(feature = "gls254")]
+pub mod gls254;
+
 #[cfg(feature = "ed448")]
 pub mod ed448;
 
@@ -165,3 +170,6 @@ pub mod frost;
 
 #[cfg(feature = "lms")]
 pub mod lms;
+
+#[cfg(feature = "blake2s")]
+pub mod blake2s;

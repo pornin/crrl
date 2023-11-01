@@ -46,7 +46,7 @@
 use core::ops::{Add, AddAssign, Mul, MulAssign, Neg, Sub, SubAssign};
 use core::convert::TryFrom;
 use super::field::{GF255s, ModInt256};
-use blake2::{Blake2s256, Digest};
+use super::blake2s::Blake2s256;
 use super::{CryptoRng, RngCore};
 
 /// An element in the jq255s group.
@@ -1567,9 +1567,13 @@ impl PublicKey {
     /// is returned.
     pub fn decode(buf: &[u8]) -> Option<PublicKey> {
         let point = Point::decode(buf)?;
-        let mut encoded = [0u8; 32];
-        encoded[..].copy_from_slice(&buf[0..32]);
-        Some(Self { point, encoded })
+        if point.isneutral() != 0 {
+            None
+        } else {
+            let mut encoded = [0u8; 32];
+            encoded[..].copy_from_slice(&buf[0..32]);
+            Some(Self { point, encoded })
+        }
     }
 
     /// Encode this public key into exactly 32 bytes.
@@ -2253,7 +2257,7 @@ mod tests {
 
     use super::{Point, Scalar, PrivateKey, PublicKey};
     use sha2::{Sha256, Digest};
-    use blake2::{Blake2s256};
+    use crate::blake2s::Blake2s256;
     use crate::field::GF255s;
 
     /* unused

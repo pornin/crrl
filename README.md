@@ -87,6 +87,16 @@ are implemented:
     and `x448::x448_base()` provide the same functionality for the
     X448 function.
 
+  - Type `gls254::Point` implements the GLS254 curve (or, more precisely,
+    a prime-order group homomorphic to a subgroup of that curve), which is
+    defined over a binary field. `gls254::Scalar` is the type for integers
+    modulo the curve order. `gls254::PrivateKey` and `gls254:PublicKey`
+    implement high-level operations such as key exchange and signatures,
+    using that group.
+
+  - Module `blake2s` contains some BLAKE2s implementations, with
+    optional SSE2 and AVX2 optimizations.
+
 Types `GF255` and `ModInt256` have a 32-bit and a 64-bit implementations
 each (actually two 64-bit implementations, see later the discussion
 about the `gf255_m51` feature). The code is portable (it was tested on
@@ -180,6 +190,12 @@ field). The defined primitive-controlling features are the following:
   - `gfgen`: generic finite field implementation (generating macro; prime
     modulus of arbitrary length)
 
+  - `gls254`: GLS254 prime-order group and signatures
+
+  - `gls254bench`: additional benchmarking code for GLS254
+
+  - `blake2s`: BLAKE2s hash function
+
 Some operations have multiple backends. An appropriate backend is selected
 at compile-time, but this can be overridden by enabling some features:
 
@@ -196,6 +212,22 @@ at compile-time, but this can be overridden by enabling some features:
     default on 64-bit RISC-V targets (riscv64), but not on other 64-bit
     architectures where 64-bit limbs are normally preferred. This feature
     has no effect if the 32-bit code is used.
+
+  - `gfb254_m64`: enforce use of the generic implementation of the
+    binary field GF(2^254). This feature has no effect if the 32-bit code
+    is used.
+
+  - `gfb254_x86clmul`: enforce use of the AVX2+pclmulqdq implementation of
+    the binary field GF(2^254). This code is used automatically if the
+    compilation target is an x86 with the relevant hardware support; this
+    feature bypasses the automatic detection. This feature has no effect
+    if the 32-bit code is used.
+
+  - `gfb254_arm64pmull`: enforce use of the NEON+pmull implementation of
+    the binary field GF(2^254). This code is used automatically if the
+    compilation target is an aarch64 system; this feature bypasses the
+    automatic detection. This feature has no effect if the 32-bit code
+    is used.
 
 # Security and Compliance
 
@@ -260,8 +292,13 @@ directly.
     one](https://github.com/jerinjacobk/armv8_pmu_cycle_counter_el0)
     works for me.
 
-  - On architectures other than i386, x86-64 and aarch64, benchmark
-    code will simply not compile.
+  - On riscv64gc, the cycle counter is accessed directly. In general,
+    that counter is not enabled and all benches return zero; to enable
+    the cycle counter, run the benchmark binary inside the `perf`
+    tool (which comes with the `linux-tools`).
+
+  - On architectures other than i386, x86-64, aarch64 and riscv64gc,
+    benchmark code will simply not compile.
 
 # TODO
 

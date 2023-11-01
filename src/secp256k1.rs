@@ -1146,6 +1146,9 @@ impl Point {
     /// This operation is constant-time. It is faster than using the
     /// generic multiplication on `Self::BASE`.
     pub fn set_mulgen(&mut self, n: &Scalar) {
+        // TODO: use the endomorphism to speed up this computation
+        // (see jq255.rs and gls254.rs for examples)
+
         // Recode the scalar into 52 signed digits.
         let sd = Self::recode_scalar(n);
 

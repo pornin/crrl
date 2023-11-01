@@ -786,7 +786,7 @@ impl<const M0: u64, const M1: u64, const M2: u64, const M3: u64> ModInt256<M0, M
 
     // Square this value n times (in place).
     #[inline]
-    fn set_xsquare(&mut self, n: u32) {
+    pub fn set_xsquare(&mut self, n: u32) {
         for _ in 0..n {
             self.set_square();
         }

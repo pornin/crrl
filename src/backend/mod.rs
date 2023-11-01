@@ -185,6 +185,14 @@ compile_error!("cannot use w32 and w64 backends simultaneously");
 ))]
 pub mod w32;
 
+/// Fixed-size integers with constant-time operations: 128-bit, 256-bit,
+/// and 384-bit. Only a few operations are implemented.
+#[cfg(any(
+    feature = "w32_backend",
+    all(not(feature = "w64_backend"), target_pointer_width = "32"),
+))]
+pub use w32::{Zu128, Zu256, Zu384};
+
 /// Finite field: integers modulo 2^255 - `MQ`.
 ///
 /// The modulus MUST be prime. The type parameter `MQ` MUST be an odd
@@ -264,7 +272,20 @@ pub use w32::GF255s;
         all(not(feature = "w64_backend"), target_pointer_width = "32")),
     feature = "modint256",
 ))]
-pub use w32::modint::ModInt256;
+pub use w32::ModInt256;
+
+/// A type similar to `ModInt256` but with "enforced constant-time". This
+/// is meant to support some uncooperative platforms where multiplication
+/// opcodes are not constant-time in their full application range; in
+/// that case, `ModInt256ct` ensures constant-time processing, but at
+/// a cost (it will be substantially slower than `ModInt256` in those cases).
+#[cfg(all(
+    any(
+        feature = "w32_backend",
+        all(not(feature = "w64_backend"), target_pointer_width = "32")),
+    feature = "modint256",
+))]
+pub use w32::ModInt256ct;
 
 /// Finite field: integers modulo 2^256 - 2^32 - 977.
 ///
@@ -299,6 +320,17 @@ pub use w32::GFp256;
 ))]
 pub use w32::GF448;
 
+/// Finite fields: GF(2^127) and GF(2^254)
+///
+/// These are dedicated types used for the base field of curve GLS-254.
+#[cfg(all(
+    any(
+        feature = "w32_backend",
+        all(not(feature = "w64_backend"), target_pointer_width = "32")),
+    feature = "gfb254",
+))]
+pub use w32::{GFb127, GFb254};
+
 /// Finite field generic implementation: support macro.
 #[cfg(all(
     any(
@@ -322,6 +354,14 @@ pub use w32::gfgen::define_gfgen_tests;
     all(not(feature = "w32_backend"), target_pointer_width = "64"),
 ))]
 pub mod w64;
+
+/// Fixed-size integers with constant-time operations: 128-bit, 256-bit,
+/// and 384-bit. Only a few operations are implemented.
+#[cfg(any(
+    feature = "w64_backend",
+    all(not(feature = "w32_backend"), target_pointer_width = "64"),
+))]
+pub use w64::{Zu128, Zu256, Zu384};
 
 /// Finite field: integers modulo 2^255 - `MQ`.
 ///
@@ -398,7 +438,20 @@ pub use w64::GF255s;
         all(not(feature = "w32_backend"), target_pointer_width = "64")),
     feature = "modint256",
 ))]
-pub use w64::modint::ModInt256;
+pub use w64::ModInt256;
+
+/// A type similar to `ModInt256` but with "enforced constant-time". This
+/// is meant to support some uncooperative platforms where multiplication
+/// opcodes are not constant-time in their full application range; in
+/// that case, `ModInt256ct` ensures constant-time processing, but at
+/// a cost (it will be substantially slower than `ModInt256` in those cases).
+#[cfg(all(
+    any(
+        feature = "w64_backend",
+        all(not(feature = "w32_backend"), target_pointer_width = "64")),
+    feature = "modint256",
+))]
+pub use w64::ModInt256ct;
 
 /// Finite field: integers modulo 2^256 - 2^32 - 977.
 ///
@@ -432,6 +485,17 @@ pub use w64::GFp256;
     feature = "gf448",
 ))]
 pub use w64::GF448;
+
+/// Finite fields: GF(2^127) and GF(2^254)
+///
+/// These are dedicated types used for the base field of curve GLS-254.
+#[cfg(all(
+    any(
+        feature = "w64_backend",
+        all(not(feature = "w32_backend"), target_pointer_width = "64")),
+    feature = "gfb254",
+))]
+pub use w64::{GFb127, GFb254};
 
 /// Finite field generic implementation: support macro.
 #[cfg(all(

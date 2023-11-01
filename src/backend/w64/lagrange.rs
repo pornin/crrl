@@ -650,6 +650,7 @@ define_lagrange_spec!(lagrange192_spec_vartime, ZInt128, ZInt192, ZInt384);
 // (not truncated).
 //
 // Values a and b are provided as two 64-bit words each (little-endian order).
+#[allow(dead_code)]
 pub(crate) fn lagrange128_basisconv_vartime(a: &[u64; 2], b: &[u64; 2])
     -> (i64, i64, i64, i64, u32)
 {

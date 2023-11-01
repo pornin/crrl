@@ -156,6 +156,7 @@ fn bench_pkey_verify() -> (f64, u8) {
     ((tt[tt.len() >> 1] as f64) / 128.0, msg[0])
 }
 
+#[cfg(feature = "alloc")]
 fn bench_pkey_verify_trunc(rm: usize) -> (f64, f64, u8) {
     let z = core_cycles();
     let mut sh = Sha256::new();
@@ -241,23 +242,26 @@ fn main() {
     bx ^= x;
     println!("P-256 verify:                  {:13.2}", v);
 
-    let (v1, v2, x) = bench_pkey_verify_trunc(8);
-    bx ^= x;
-    println!("P-256 verify_trunc8:           {:13.2}  {:13.2}", v1, v2);
-    let (v1, v2, x) = bench_pkey_verify_trunc(16);
-    bx ^= x;
-    println!("P-256 verify_trunc16:          {:13.2}  {:13.2}", v1, v2);
-    /*
-    let (v1, v2, x) = bench_pkey_verify_trunc(24);
-    bx ^= x;
-    println!("P-256 verify_trunc24:          {:13.2}  {:13.2}", v1, v2);
-    let (v1, v2, x) = bench_pkey_verify_trunc(28);
-    bx ^= x;
-    println!("P-256 verify_trunc28:          {:13.2}  {:13.2}", v1, v2);
-    let (v1, v2, x) = bench_pkey_verify_trunc(32);
-    bx ^= x;
-    println!("P-256 verify_trunc32:          {:13.2}  {:13.2}", v1, v2);
-    */
+    #[cfg(feature = "alloc")]
+    {
+        let (v1, v2, x) = bench_pkey_verify_trunc(8);
+        bx ^= x;
+        println!("P-256 verify_trunc8:           {:13.2}  {:13.2}", v1, v2);
+        let (v1, v2, x) = bench_pkey_verify_trunc(16);
+        bx ^= x;
+        println!("P-256 verify_trunc16:          {:13.2}  {:13.2}", v1, v2);
+        /*
+        let (v1, v2, x) = bench_pkey_verify_trunc(24);
+        bx ^= x;
+        println!("P-256 verify_trunc24:          {:13.2}  {:13.2}", v1, v2);
+        let (v1, v2, x) = bench_pkey_verify_trunc(28);
+        bx ^= x;
+        println!("P-256 verify_trunc28:          {:13.2}  {:13.2}", v1, v2);
+        let (v1, v2, x) = bench_pkey_verify_trunc(32);
+        bx ^= x;
+        println!("P-256 verify_trunc32:          {:13.2}  {:13.2}", v1, v2);
+        */
+    }
 
     println!("{}", bx);
 }

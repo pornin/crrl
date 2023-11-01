@@ -1,6 +1,6 @@
 [package]
 name = "crrl"
-version = "0.7.0"
+version = "0.8.0"
 authors = ["Thomas Pornin <thomas.pornin@nccgroup.com>"]
 edition = "2018"
 license = "MIT"
@@ -16,7 +16,6 @@ exclude = ["extra/*"]
 [dependencies]
 sha2 = "0.10.2"
 sha3 = "0.10.6"
-blake2 = "0.10.4"
 rand_core = "0.6"
 
 [dev-dependencies]
@@ -41,17 +40,21 @@ w32_backend = []
 w64_backend = []
 gf255_m51 = []
 gf255_m64 = []
-omnes = [ "decaf448", "ed25519", "ed448", "frost", "jq255e", "jq255s", "lms", "p256", "ristretto255", "secp256k1", "x25519", "x448", "modint256", "gf255", "gfgen" ]
+gfb254_m64 = []
+gfb254_x86clmul = []
+gfb254_arm64pmull = []
+omnes = [ "decaf448", "ed25519", "ed448", "frost", "jq255e", "jq255s", "lms", "p256", "ristretto255", "secp256k1", "gls254", "x25519", "x448", "modint256", "gf255", "gfgen" ]
 decaf448 = [ "ed448" ]
 ed25519 = [ "gf25519", "modint256" ]
 ed448 = [ "gf448", "gfgen" ]
 frost = [ "alloc" ]
-jq255e = [ "gf255e", "modint256" ]
-jq255s = [ "gf255s", "modint256" ]
+jq255e = [ "gf255e", "modint256", "blake2s" ]
+jq255s = [ "gf255s", "modint256", "blake2s" ]
 lms = []
 p256 = [ "gfp256", "modint256" ]
 ristretto255 = [ "ed25519" ]
 secp256k1 = [ "gfsecp256k1", "modint256" ]
+gls254 = [ "gfb254", "modint256", "blake2s" ]
 x25519 = [ "ed25519" ]
 x448 = [ "ed448" ]
 gfgen = []
@@ -63,6 +66,11 @@ gfp256 = []
 gfsecp256k1 = []
 gf448 = []
 modint256 = []
+gfb254 = []
+gls254bench = []
+zz32 = []
+zz64 = []
+blake2s = []
 
 [[bench]]
 name = "modint"
@@ -125,6 +133,12 @@ harness = false
 required-features = [ "secp256k1" ]
 
 [[bench]]
+name = "gls254"
+path = "benches/gls254.rs"
+harness = false
+required-features = [ "gls254" ]
+
+[[bench]]
 name = "gf448"
 path = "benches/gf448.rs"
 harness = false
@@ -147,3 +161,9 @@ name = "x448"
 path = "benches/x448.rs"
 harness = false
 required-features = [ "x448" ]
+
+[[bench]]
+name = "blake2s"
+path = "benches/blake2s.rs"
+harness = false
+required-features = [ "blake2s" ]

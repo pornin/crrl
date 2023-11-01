@@ -2201,6 +2201,39 @@ impl<const MQ: u64> GF255<MQ> {
 
         Self::w64le(d0, d1, d2, d3)
     }
+
+    /// Constant-time table lookup: given a table of 48 field elements,
+    /// and an index `j` in the 0 to 15 range, return the elements of
+    /// index `j*3` to `j*3+2`. If `j` is not in the 0 to 15 range
+    /// (inclusive), then this returns three zeros.
+    pub fn lookup16_x3(tab: &[Self; 48], j: u32) -> [Self; 3] {
+        let mut d = [Self::ZERO; 3];
+        for i in 0..16 {
+            let w = ((j.wrapping_sub(i as u32)
+                | (i as u32).wrapping_sub(j)) >> 31).wrapping_sub(1);
+            d[0].set_cond(&tab[3 * i + 0], w);
+            d[1].set_cond(&tab[3 * i + 1], w);
+            d[2].set_cond(&tab[3 * i + 2], w);
+        }
+        d
+    }
+
+    /// Constant-time table lookup: given a table of 64 field elements,
+    /// and an index `j` in the 0 to 15 range, return the elements of
+    /// index `j*4` to `j*4+3`. If `j` is not in the 0 to 15 range
+    /// (inclusive), then this returns four zeros.
+    pub fn lookup16_x4(tab: &[Self; 64], j: u32) -> [Self; 4] {
+        let mut d = [Self::ZERO; 4];
+        for i in 0..16 {
+            let w = ((j.wrapping_sub(i as u32)
+                | (i as u32).wrapping_sub(j)) >> 31).wrapping_sub(1);
+            d[0].set_cond(&tab[4 * i + 0], w);
+            d[1].set_cond(&tab[4 * i + 1], w);
+            d[2].set_cond(&tab[4 * i + 2], w);
+            d[3].set_cond(&tab[4 * i + 3], w);
+        }
+        d
+    }
 }
 
 impl<const MQ: u64> GF255NotReduced<MQ> {

@@ -1,13 +1,16 @@
 use core::ops::{Add, AddAssign, Div, DivAssign, Mul, MulAssign, Neg, Sub, SubAssign};
 use core::convert::TryFrom;
 
-use super::{addcarry_u32, subborrow_u32, umull_add, umull_add2, umull_x2, umull_x2_add, sgnw, lzcnt};
+use super::util32::{addcarry_u32, subborrow_u32, umull_add, umull_add2, umull_x2, umull_x2_add, sgnw, lzcnt};
+
+// Lagrange's algorithm is inherently not constant-time; we can use the
+// 64-bit code.
 use super::lagrange::lagrange253_vartime;
 
 #[derive(Clone, Copy, Debug)]
-pub struct ModInt256<const M0: u64, const M1: u64, const M2: u64, const M3: u64>([u32; 8]);
+pub struct ModInt256ct<const M0: u64, const M1: u64, const M2: u64, const M3: u64>([u32; 8]);
 
-impl<const M0: u64, const M1: u64, const M2: u64, const M3: u64> ModInt256<M0, M1, M2, M3> {
+impl<const M0: u64, const M1: u64, const M2: u64, const M3: u64> ModInt256ct<M0, M1, M2, M3> {
 
     // Modulus must be odd.
     // Top modulus word must not be zero (i.e. the modulus size must be at
@@ -30,6 +33,9 @@ impl<const M0: u64, const M1: u64, const M2: u64, const M3: u64> ModInt256<M0, M
         M3 as u32, (M3 >> 32) as u32,
     ];
 
+    // Modulus, in base 2^64 (low-to-high order).
+    const MODULUS64: [u64; 4] = [ M0, M1, M2, M3 ];
+
     // Actual encoding length (modulus size, in bytes).
     pub const ENC_LEN: usize = 24 + (if M3 < 0x100000000 {
         if M3 < 0x10000 {
@@ -51,12 +57,12 @@ impl<const M0: u64, const M1: u64, const M2: u64, const M3: u64> ModInt256<M0, M
     // floor(q / 8) (equal to (q-5)/8 if q = 5 mod 8).
     const QM5D8: [u32; 8] = Self::make_qm5d8();
 
-    pub const ZERO: ModInt256<M0, M1, M2, M3> =
-        ModInt256::<M0, M1, M2, M3>([ 0, 0, 0, 0, 0, 0, 0, 0 ]);
-    pub const ONE: ModInt256<M0, M1, M2, M3> =
-        ModInt256::<M0, M1, M2, M3>::w64le(1, 0, 0, 0);
-    pub const MINUS_ONE: ModInt256<M0, M1, M2, M3> =
-        ModInt256::<M0, M1, M2, M3>::w64le(M0 - 1, M1, M2, M3);
+    pub const ZERO: ModInt256ct<M0, M1, M2, M3> =
+        ModInt256ct::<M0, M1, M2, M3>([ 0, 0, 0, 0, 0, 0, 0, 0 ]);
+    pub const ONE: ModInt256ct<M0, M1, M2, M3> =
+        ModInt256ct::<M0, M1, M2, M3>::w64le(1, 0, 0, 0);
+    pub const MINUS_ONE: ModInt256ct<M0, M1, M2, M3> =
+        ModInt256ct::<M0, M1, M2, M3>::w64le(M0 - 1, M1, M2, M3);
 
     const M0I: u32 = Self::make_m0i(M0 as u32);
     const HMP1: Self = Self::make_hmp1();
@@ -1215,7 +1221,13 @@ impl<const M0: u64, const M1: u64, const M2: u64, const M3: u64> ModInt256<M0, M
     pub fn split_vartime(self) -> (i128, i128) {
         let mut k = self;
         k.set_montyred();
-        lagrange253_vartime(&k.0, &Self::MODULUS)
+        let k64 = [
+            (k.0[0] as u64) | ((k.0[1] as u64) << 32),
+            (k.0[2] as u64) | ((k.0[3] as u64) << 32),
+            (k.0[4] as u64) | ((k.0[5] as u64) << 32),
+            (k.0[6] as u64) | ((k.0[7] as u64) << 32),
+        ];
+        lagrange253_vartime(&k64, &Self::MODULUS64)
     }
 
     // Equality check between two elements (constant-time); returned value
@@ -1586,7 +1598,7 @@ impl<const M0: u64, const M1: u64, const M2: u64, const M3: u64> ModInt256<M0, M
             let d6 = (a[5] >> 31) | (a[6] << 1);
             let d7 = (a[6] >> 31) | (a[7] << 1);
             let d8 = a[7] >> 31;
-            ModInt256::<M0, M1, M2, M3>::const_mred1(
+            ModInt256ct::<M0, M1, M2, M3>::const_mred1(
                 &[ d0, d1, d2, d3, d4, d5, d6, d7, d8 ])
         }
 
@@ -1689,13 +1701,13 @@ impl<const M0: u64, const M1: u64, const M2: u64, const M3: u64> ModInt256<M0, M
 // (+, *, /...) on field element instances, with or without references.
 
 impl<const M0: u64, const M1: u64, const M2: u64, const M3: u64>
-    Add<ModInt256<M0, M1, M2, M3>> for ModInt256<M0, M1, M2, M3>
+    Add<ModInt256ct<M0, M1, M2, M3>> for ModInt256ct<M0, M1, M2, M3>
 {
-    type Output = ModInt256<M0, M1, M2, M3>;
+    type Output = ModInt256ct<M0, M1, M2, M3>;
 
     #[inline(always)]
-    fn add(self, other: ModInt256<M0, M1, M2, M3>)
-        -> ModInt256<M0, M1, M2, M3>
+    fn add(self, other: ModInt256ct<M0, M1, M2, M3>)
+        -> ModInt256ct<M0, M1, M2, M3>
     {
         let mut r = self;
         r.set_add(&other);
@@ -1704,13 +1716,13 @@ impl<const M0: u64, const M1: u64, const M2: u64, const M3: u64>
 }
 
 impl<const M0: u64, const M1: u64, const M2: u64, const M3: u64>
-    Add<&ModInt256<M0, M1, M2, M3>> for ModInt256<M0, M1, M2, M3>
+    Add<&ModInt256ct<M0, M1, M2, M3>> for ModInt256ct<M0, M1, M2, M3>
 {
-    type Output = ModInt256<M0, M1, M2, M3>;
+    type Output = ModInt256ct<M0, M1, M2, M3>;
 
     #[inline(always)]
-    fn add(self, other: &ModInt256<M0, M1, M2, M3>)
-        -> ModInt256<M0, M1, M2, M3>
+    fn add(self, other: &ModInt256ct<M0, M1, M2, M3>)
+        -> ModInt256ct<M0, M1, M2, M3>
     {
         let mut r = self;
         r.set_add(other);
@@ -1719,13 +1731,13 @@ impl<const M0: u64, const M1: u64, const M2: u64, const M3: u64>
 }
 
 impl<const M0: u64, const M1: u64, const M2: u64, const M3: u64>
-    Add<ModInt256<M0, M1, M2, M3>> for &ModInt256<M0, M1, M2, M3>
+    Add<ModInt256ct<M0, M1, M2, M3>> for &ModInt256ct<M0, M1, M2, M3>
 {
-    type Output = ModInt256<M0, M1, M2, M3>;
+    type Output = ModInt256ct<M0, M1, M2, M3>;
 
     #[inline(always)]
-    fn add(self, other: ModInt256<M0, M1, M2, M3>)
-        -> ModInt256<M0, M1, M2, M3>
+    fn add(self, other: ModInt256ct<M0, M1, M2, M3>)
+        -> ModInt256ct<M0, M1, M2, M3>
     {
         let mut r = *self;
         r.set_add(&other);
@@ -1734,13 +1746,13 @@ impl<const M0: u64, const M1: u64, const M2: u64, const M3: u64>
 }
 
 impl<const M0: u64, const M1: u64, const M2: u64, const M3: u64>
-    Add<&ModInt256<M0, M1, M2, M3>> for &ModInt256<M0, M1, M2, M3>
+    Add<&ModInt256ct<M0, M1, M2, M3>> for &ModInt256ct<M0, M1, M2, M3>
 {
-    type Output = ModInt256<M0, M1, M2, M3>;
+    type Output = ModInt256ct<M0, M1, M2, M3>;
 
     #[inline(always)]
-    fn add(self, other: &ModInt256<M0, M1, M2, M3>)
-        -> ModInt256<M0, M1, M2, M3>
+    fn add(self, other: &ModInt256ct<M0, M1, M2, M3>)
+        -> ModInt256ct<M0, M1, M2, M3>
     {
         let mut r = *self;
         r.set_add(other);
@@ -1749,31 +1761,31 @@ impl<const M0: u64, const M1: u64, const M2: u64, const M3: u64>
 }
 
 impl<const M0: u64, const M1: u64, const M2: u64, const M3: u64>
-    AddAssign<ModInt256<M0, M1, M2, M3>> for ModInt256<M0, M1, M2, M3>
+    AddAssign<ModInt256ct<M0, M1, M2, M3>> for ModInt256ct<M0, M1, M2, M3>
 {
     #[inline(always)]
-    fn add_assign(&mut self, other: ModInt256<M0, M1, M2, M3>) {
+    fn add_assign(&mut self, other: ModInt256ct<M0, M1, M2, M3>) {
         self.set_add(&other);
     }
 }
 
 impl<const M0: u64, const M1: u64, const M2: u64, const M3: u64>
-    AddAssign<&ModInt256<M0, M1, M2, M3>> for ModInt256<M0, M1, M2, M3>
+    AddAssign<&ModInt256ct<M0, M1, M2, M3>> for ModInt256ct<M0, M1, M2, M3>
 {
     #[inline(always)]
-    fn add_assign(&mut self, other: &ModInt256<M0, M1, M2, M3>) {
+    fn add_assign(&mut self, other: &ModInt256ct<M0, M1, M2, M3>) {
         self.set_add(other);
     }
 }
 
 impl<const M0: u64, const M1: u64, const M2: u64, const M3: u64>
-    Div<ModInt256<M0, M1, M2, M3>> for ModInt256<M0, M1, M2, M3>
+    Div<ModInt256ct<M0, M1, M2, M3>> for ModInt256ct<M0, M1, M2, M3>
 {
-    type Output = ModInt256<M0, M1, M2, M3>;
+    type Output = ModInt256ct<M0, M1, M2, M3>;
 
     #[inline(always)]
-    fn div(self, other: ModInt256<M0, M1, M2, M3>)
-        -> ModInt256<M0, M1, M2, M3>
+    fn div(self, other: ModInt256ct<M0, M1, M2, M3>)
+        -> ModInt256ct<M0, M1, M2, M3>
     {
         let mut r = self;
         r.set_div(&other);
@@ -1782,13 +1794,13 @@ impl<const M0: u64, const M1: u64, const M2: u64, const M3: u64>
 }
 
 impl<const M0: u64, const M1: u64, const M2: u64, const M3: u64>
-    Div<&ModInt256<M0, M1, M2, M3>> for ModInt256<M0, M1, M2, M3>
+    Div<&ModInt256ct<M0, M1, M2, M3>> for ModInt256ct<M0, M1, M2, M3>
 {
-    type Output = ModInt256<M0, M1, M2, M3>;
+    type Output = ModInt256ct<M0, M1, M2, M3>;
 
     #[inline(always)]
-    fn div(self, other: &ModInt256<M0, M1, M2, M3>)
-        -> ModInt256<M0, M1, M2, M3>
+    fn div(self, other: &ModInt256ct<M0, M1, M2, M3>)
+        -> ModInt256ct<M0, M1, M2, M3>
     {
         let mut r = self;
         r.set_div(other);
@@ -1797,13 +1809,13 @@ impl<const M0: u64, const M1: u64, const M2: u64, const M3: u64>
 }
 
 impl<const M0: u64, const M1: u64, const M2: u64, const M3: u64>
-    Div<ModInt256<M0, M1, M2, M3>> for &ModInt256<M0, M1, M2, M3>
+    Div<ModInt256ct<M0, M1, M2, M3>> for &ModInt256ct<M0, M1, M2, M3>
 {
-    type Output = ModInt256<M0, M1, M2, M3>;
+    type Output = ModInt256ct<M0, M1, M2, M3>;
 
     #[inline(always)]
-    fn div(self, other: ModInt256<M0, M1, M2, M3>)
-        -> ModInt256<M0, M1, M2, M3>
+    fn div(self, other: ModInt256ct<M0, M1, M2, M3>)
+        -> ModInt256ct<M0, M1, M2, M3>
     {
         let mut r = *self;
         r.set_div(&other);
@@ -1812,13 +1824,13 @@ impl<const M0: u64, const M1: u64, const M2: u64, const M3: u64>
 }
 
 impl<const M0: u64, const M1: u64, const M2: u64, const M3: u64>
-    Div<&ModInt256<M0, M1, M2, M3>> for &ModInt256<M0, M1, M2, M3>
+    Div<&ModInt256ct<M0, M1, M2, M3>> for &ModInt256ct<M0, M1, M2, M3>
 {
-    type Output = ModInt256<M0, M1, M2, M3>;
+    type Output = ModInt256ct<M0, M1, M2, M3>;
 
     #[inline(always)]
-    fn div(self, other: &ModInt256<M0, M1, M2, M3>)
-        -> ModInt256<M0, M1, M2, M3>
+    fn div(self, other: &ModInt256ct<M0, M1, M2, M3>)
+        -> ModInt256ct<M0, M1, M2, M3>
     {
         let mut r = *self;
         r.set_div(other);
@@ -1827,31 +1839,31 @@ impl<const M0: u64, const M1: u64, const M2: u64, const M3: u64>
 }
 
 impl<const M0: u64, const M1: u64, const M2: u64, const M3: u64>
-    DivAssign<ModInt256<M0, M1, M2, M3>> for ModInt256<M0, M1, M2, M3>
+    DivAssign<ModInt256ct<M0, M1, M2, M3>> for ModInt256ct<M0, M1, M2, M3>
 {
     #[inline(always)]
-    fn div_assign(&mut self, other: ModInt256<M0, M1, M2, M3>) {
+    fn div_assign(&mut self, other: ModInt256ct<M0, M1, M2, M3>) {
         self.set_div(&other);
     }
 }
 
 impl<const M0: u64, const M1: u64, const M2: u64, const M3: u64>
-    DivAssign<&ModInt256<M0, M1, M2, M3>> for ModInt256<M0, M1, M2, M3>
+    DivAssign<&ModInt256ct<M0, M1, M2, M3>> for ModInt256ct<M0, M1, M2, M3>
 {
     #[inline(always)]
-    fn div_assign(&mut self, other: &ModInt256<M0, M1, M2, M3>) {
+    fn div_assign(&mut self, other: &ModInt256ct<M0, M1, M2, M3>) {
         self.set_div(other);
     }
 }
 
 impl<const M0: u64, const M1: u64, const M2: u64, const M3: u64>
-    Mul<ModInt256<M0, M1, M2, M3>> for ModInt256<M0, M1, M2, M3>
+    Mul<ModInt256ct<M0, M1, M2, M3>> for ModInt256ct<M0, M1, M2, M3>
 {
-    type Output = ModInt256<M0, M1, M2, M3>;
+    type Output = ModInt256ct<M0, M1, M2, M3>;
 
     #[inline(always)]
-    fn mul(self, other: ModInt256<M0, M1, M2, M3>)
-        -> ModInt256<M0, M1, M2, M3>
+    fn mul(self, other: ModInt256ct<M0, M1, M2, M3>)
+        -> ModInt256ct<M0, M1, M2, M3>
     {
         let mut r = self;
         r.set_mul(&other);
@@ -1860,13 +1872,13 @@ impl<const M0: u64, const M1: u64, const M2: u64, const M3: u64>
 }
 
 impl<const M0: u64, const M1: u64, const M2: u64, const M3: u64>
-    Mul<&ModInt256<M0, M1, M2, M3>> for ModInt256<M0, M1, M2, M3>
+    Mul<&ModInt256ct<M0, M1, M2, M3>> for ModInt256ct<M0, M1, M2, M3>
 {
-    type Output = ModInt256<M0, M1, M2, M3>;
+    type Output = ModInt256ct<M0, M1, M2, M3>;
 
     #[inline(always)]
-    fn mul(self, other: &ModInt256<M0, M1, M2, M3>)
-        -> ModInt256<M0, M1, M2, M3>
+    fn mul(self, other: &ModInt256ct<M0, M1, M2, M3>)
+        -> ModInt256ct<M0, M1, M2, M3>
     {
         let mut r = self;
         r.set_mul(other);
@@ -1875,13 +1887,13 @@ impl<const M0: u64, const M1: u64, const M2: u64, const M3: u64>
 }
 
 impl<const M0: u64, const M1: u64, const M2: u64, const M3: u64>
-    Mul<ModInt256<M0, M1, M2, M3>> for &ModInt256<M0, M1, M2, M3>
+    Mul<ModInt256ct<M0, M1, M2, M3>> for &ModInt256ct<M0, M1, M2, M3>
 {
-    type Output = ModInt256<M0, M1, M2, M3>;
+    type Output = ModInt256ct<M0, M1, M2, M3>;
 
     #[inline(always)]
-    fn mul(self, other: ModInt256<M0, M1, M2, M3>)
-        -> ModInt256<M0, M1, M2, M3>
+    fn mul(self, other: ModInt256ct<M0, M1, M2, M3>)
+        -> ModInt256ct<M0, M1, M2, M3>
     {
         let mut r = *self;
         r.set_mul(&other);
@@ -1890,13 +1902,13 @@ impl<const M0: u64, const M1: u64, const M2: u64, const M3: u64>
 }
 
 impl<const M0: u64, const M1: u64, const M2: u64, const M3: u64>
-    Mul<&ModInt256<M0, M1, M2, M3>> for &ModInt256<M0, M1, M2, M3>
+    Mul<&ModInt256ct<M0, M1, M2, M3>> for &ModInt256ct<M0, M1, M2, M3>
 {
-    type Output = ModInt256<M0, M1, M2, M3>;
+    type Output = ModInt256ct<M0, M1, M2, M3>;
 
     #[inline(always)]
-    fn mul(self, other: &ModInt256<M0, M1, M2, M3>)
-        -> ModInt256<M0, M1, M2, M3>
+    fn mul(self, other: &ModInt256ct<M0, M1, M2, M3>)
+        -> ModInt256ct<M0, M1, M2, M3>
     {
         let mut r = *self;
         r.set_mul(other);
@@ -1905,30 +1917,30 @@ impl<const M0: u64, const M1: u64, const M2: u64, const M3: u64>
 }
 
 impl<const M0: u64, const M1: u64, const M2: u64, const M3: u64>
-    MulAssign<ModInt256<M0, M1, M2, M3>> for ModInt256<M0, M1, M2, M3>
+    MulAssign<ModInt256ct<M0, M1, M2, M3>> for ModInt256ct<M0, M1, M2, M3>
 {
     #[inline(always)]
-    fn mul_assign(&mut self, other: ModInt256<M0, M1, M2, M3>) {
+    fn mul_assign(&mut self, other: ModInt256ct<M0, M1, M2, M3>) {
         self.set_mul(&other);
     }
 }
 
 impl<const M0: u64, const M1: u64, const M2: u64, const M3: u64>
-    MulAssign<&ModInt256<M0, M1, M2, M3>> for ModInt256<M0, M1, M2, M3>
+    MulAssign<&ModInt256ct<M0, M1, M2, M3>> for ModInt256ct<M0, M1, M2, M3>
 {
     #[inline(always)]
-    fn mul_assign(&mut self, other: &ModInt256<M0, M1, M2, M3>) {
+    fn mul_assign(&mut self, other: &ModInt256ct<M0, M1, M2, M3>) {
         self.set_mul(other);
     }
 }
 
 impl<const M0: u64, const M1: u64, const M2: u64, const M3: u64>
-    Neg for ModInt256<M0, M1, M2, M3>
+    Neg for ModInt256ct<M0, M1, M2, M3>
 {
-    type Output = ModInt256<M0, M1, M2, M3>;
+    type Output = ModInt256ct<M0, M1, M2, M3>;
 
     #[inline(always)]
-    fn neg(self) -> ModInt256<M0, M1, M2, M3> {
+    fn neg(self) -> ModInt256ct<M0, M1, M2, M3> {
         let mut r = self;
         r.set_neg();
         r
@@ -1936,12 +1948,12 @@ impl<const M0: u64, const M1: u64, const M2: u64, const M3: u64>
 }
 
 impl<const M0: u64, const M1: u64, const M2: u64, const M3: u64>
-    Neg for &ModInt256<M0, M1, M2, M3>
+    Neg for &ModInt256ct<M0, M1, M2, M3>
 {
-    type Output = ModInt256<M0, M1, M2, M3>;
+    type Output = ModInt256ct<M0, M1, M2, M3>;
 
     #[inline(always)]
-    fn neg(self) -> ModInt256<M0, M1, M2, M3> {
+    fn neg(self) -> ModInt256ct<M0, M1, M2, M3> {
         let mut r = *self;
         r.set_neg();
         r
@@ -1949,13 +1961,13 @@ impl<const M0: u64, const M1: u64, const M2: u64, const M3: u64>
 }
 
 impl<const M0: u64, const M1: u64, const M2: u64, const M3: u64>
-    Sub<ModInt256<M0, M1, M2, M3>> for ModInt256<M0, M1, M2, M3>
+    Sub<ModInt256ct<M0, M1, M2, M3>> for ModInt256ct<M0, M1, M2, M3>
 {
-    type Output = ModInt256<M0, M1, M2, M3>;
+    type Output = ModInt256ct<M0, M1, M2, M3>;
 
     #[inline(always)]
-    fn sub(self, other: ModInt256<M0, M1, M2, M3>)
-        -> ModInt256<M0, M1, M2, M3>
+    fn sub(self, other: ModInt256ct<M0, M1, M2, M3>)
+        -> ModInt256ct<M0, M1, M2, M3>
     {
         let mut r = self;
         r.set_sub(&other);
@@ -1964,13 +1976,13 @@ impl<const M0: u64, const M1: u64, const M2: u64, const M3: u64>
 }
 
 impl<const M0: u64, const M1: u64, const M2: u64, const M3: u64>
-    Sub<&ModInt256<M0, M1, M2, M3>> for ModInt256<M0, M1, M2, M3>
+    Sub<&ModInt256ct<M0, M1, M2, M3>> for ModInt256ct<M0, M1, M2, M3>
 {
-    type Output = ModInt256<M0, M1, M2, M3>;
+    type Output = ModInt256ct<M0, M1, M2, M3>;
 
     #[inline(always)]
-    fn sub(self, other: &ModInt256<M0, M1, M2, M3>)
-        -> ModInt256<M0, M1, M2, M3>
+    fn sub(self, other: &ModInt256ct<M0, M1, M2, M3>)
+        -> ModInt256ct<M0, M1, M2, M3>
     {
         let mut r = self;
         r.set_sub(other);
@@ -1979,13 +1991,13 @@ impl<const M0: u64, const M1: u64, const M2: u64, const M3: u64>
 }
 
 impl<const M0: u64, const M1: u64, const M2: u64, const M3: u64>
-    Sub<ModInt256<M0, M1, M2, M3>> for &ModInt256<M0, M1, M2, M3>
+    Sub<ModInt256ct<M0, M1, M2, M3>> for &ModInt256ct<M0, M1, M2, M3>
 {
-    type Output = ModInt256<M0, M1, M2, M3>;
+    type Output = ModInt256ct<M0, M1, M2, M3>;
 
     #[inline(always)]
-    fn sub(self, other: ModInt256<M0, M1, M2, M3>)
-        -> ModInt256<M0, M1, M2, M3>
+    fn sub(self, other: ModInt256ct<M0, M1, M2, M3>)
+        -> ModInt256ct<M0, M1, M2, M3>
     {
         let mut r = *self;
         r.set_sub(&other);
@@ -1994,13 +2006,13 @@ impl<const M0: u64, const M1: u64, const M2: u64, const M3: u64>
 }
 
 impl<const M0: u64, const M1: u64, const M2: u64, const M3: u64>
-    Sub<&ModInt256<M0, M1, M2, M3>> for &ModInt256<M0, M1, M2, M3>
+    Sub<&ModInt256ct<M0, M1, M2, M3>> for &ModInt256ct<M0, M1, M2, M3>
 {
-    type Output = ModInt256<M0, M1, M2, M3>;
+    type Output = ModInt256ct<M0, M1, M2, M3>;
 
     #[inline(always)]
-    fn sub(self, other: &ModInt256<M0, M1, M2, M3>)
-        -> ModInt256<M0, M1, M2, M3>
+    fn sub(self, other: &ModInt256ct<M0, M1, M2, M3>)
+        -> ModInt256ct<M0, M1, M2, M3>
     {
         let mut r = *self;
         r.set_sub(other);
@@ -2009,19 +2021,19 @@ impl<const M0: u64, const M1: u64, const M2: u64, const M3: u64>
 }
 
 impl<const M0: u64, const M1: u64, const M2: u64, const M3: u64>
-    SubAssign<ModInt256<M0, M1, M2, M3>> for ModInt256<M0, M1, M2, M3>
+    SubAssign<ModInt256ct<M0, M1, M2, M3>> for ModInt256ct<M0, M1, M2, M3>
 {
     #[inline(always)]
-    fn sub_assign(&mut self, other: ModInt256<M0, M1, M2, M3>) {
+    fn sub_assign(&mut self, other: ModInt256ct<M0, M1, M2, M3>) {
         self.set_sub(&other);
     }
 }
 
 impl<const M0: u64, const M1: u64, const M2: u64, const M3: u64>
-    SubAssign<&ModInt256<M0, M1, M2, M3>> for ModInt256<M0, M1, M2, M3>
+    SubAssign<&ModInt256ct<M0, M1, M2, M3>> for ModInt256ct<M0, M1, M2, M3>
 {
     #[inline(always)]
-    fn sub_assign(&mut self, other: &ModInt256<M0, M1, M2, M3>) {
+    fn sub_assign(&mut self, other: &ModInt256ct<M0, M1, M2, M3>) {
         self.set_sub(other);
     }
 }
@@ -2031,13 +2043,13 @@ impl<const M0: u64, const M1: u64, const M2: u64, const M3: u64>
 #[cfg(test)]
 mod tests {
 
-    use super::ModInt256;
+    use super::ModInt256ct;
     use num_bigint::{BigInt, Sign};
     use sha2::{Sha256, Digest};
 
     /* unused
     fn print<const M0: u64, const M1: u64, const M2: u64, const M3: u64>
-            (name: &str, v: ModInt256<M0, M1, M2, M3>)
+            (name: &str, v: ModInt256ct<M0, M1, M2, M3>)
     {
         println!("{} = 0x{:016X}{:016X}{:016X}{:016X}",
             name, v.0[3], v.0[2], v.0[1], v.0[0]);
@@ -2057,8 +2069,8 @@ mod tests {
         ]);
         let zpz = &zp << 64;
 
-        let a = ModInt256::<M0, M1, M2, M3>::decode32_reduce(va);
-        let b = ModInt256::<M0, M1, M2, M3>::decode32_reduce(vb);
+        let a = ModInt256ct::<M0, M1, M2, M3>::decode32_reduce(va);
+        let b = ModInt256ct::<M0, M1, M2, M3>::decode32_reduce(vb);
         let za = BigInt::from_bytes_le(Sign::Plus, va);
         let zb = BigInt::from_bytes_le(Sign::Plus, vb);
 
@@ -2144,7 +2156,7 @@ mod tests {
         let zd = (&za * &za) % &zp;
         assert!(zc == zd);
 
-        let (e, cc) = ModInt256::<M0, M1, M2, M3>::decode32(va);
+        let (e, cc) = ModInt256ct::<M0, M1, M2, M3>::decode32(va);
         if cc != 0 {
             assert!(cc == 0xFFFFFFFF);
             assert!(e.encode32() == va);
@@ -2157,7 +2169,7 @@ mod tests {
         tmp[32..64].copy_from_slice(vb);
         tmp[64..96].copy_from_slice(vx);
         for k in 0..97 {
-            let c = ModInt256::<M0, M1, M2, M3>::decode_reduce(&tmp[0..k]);
+            let c = ModInt256ct::<M0, M1, M2, M3>::decode_reduce(&tmp[0..k]);
             let vc = c.encode32();
             let zc = BigInt::from_bytes_le(Sign::Plus, &vc);
             let zd = BigInt::from_bytes_le(Sign::Plus, &tmp[0..k]) % &zp;
@@ -2183,9 +2195,9 @@ mod tests {
         let mut vb = [0u8; 32];
         let mut vx = [0u8; 32];
         check_gf_ops::<M0, M1, M2, M3>(&va, &vb, &vx);
-        assert!(ModInt256::<M0, M1, M2, M3>::decode_reduce(&va).iszero() == 0xFFFFFFFF);
-        assert!(ModInt256::<M0, M1, M2, M3>::decode_reduce(&va).equals(ModInt256::<M0, M1, M2, M3>::decode_reduce(&vb)) == 0xFFFFFFFF);
-        assert!(ModInt256::<M0, M1, M2, M3>::decode_reduce(&va).legendre() == 0);
+        assert!(ModInt256ct::<M0, M1, M2, M3>::decode_reduce(&va).iszero() == 0xFFFFFFFF);
+        assert!(ModInt256ct::<M0, M1, M2, M3>::decode_reduce(&va).equals(ModInt256ct::<M0, M1, M2, M3>::decode_reduce(&vb)) == 0xFFFFFFFF);
+        assert!(ModInt256ct::<M0, M1, M2, M3>::decode_reduce(&va).legendre() == 0);
         for i in 0..32 {
             va[i] = 0xFFu8;
             vb[i] = 0xFFu8;
@@ -2197,22 +2209,22 @@ mod tests {
            && M2 == 0xFFFFFFFFFFFFFFFF
            && M3 == 0xFFFFFFFFFFFFFFFF
         {
-            assert!(ModInt256::<M0, M1, M2, M3>::decode_reduce(&va).iszero() == 0xFFFFFFFF);
+            assert!(ModInt256ct::<M0, M1, M2, M3>::decode_reduce(&va).iszero() == 0xFFFFFFFF);
         } else {
-            assert!(ModInt256::<M0, M1, M2, M3>::decode_reduce(&va).iszero() == 0);
+            assert!(ModInt256ct::<M0, M1, M2, M3>::decode_reduce(&va).iszero() == 0);
         }
-        assert!(ModInt256::<M0, M1, M2, M3>::decode_reduce(&va).equals(ModInt256::<M0, M1, M2, M3>::decode_reduce(&vb)) == 0xFFFFFFFF);
+        assert!(ModInt256ct::<M0, M1, M2, M3>::decode_reduce(&va).equals(ModInt256ct::<M0, M1, M2, M3>::decode_reduce(&vb)) == 0xFFFFFFFF);
         va[ 0.. 8].copy_from_slice(&M0.to_le_bytes());
         va[ 8..16].copy_from_slice(&M1.to_le_bytes());
         va[16..24].copy_from_slice(&M2.to_le_bytes());
         va[24..32].copy_from_slice(&M3.to_le_bytes());
-        assert!(ModInt256::<M0, M1, M2, M3>::decode_reduce(&va).iszero() == 0xFFFFFFFF);
+        assert!(ModInt256ct::<M0, M1, M2, M3>::decode_reduce(&va).iszero() == 0xFFFFFFFF);
         let mut sh = Sha256::new();
-        let xnqr = ModInt256::<M0, M1, M2, M3>::w64le(nqr as u64, 0, 0, 0);
-        let tt = ModInt256::<M0, M1, M2, M3>::w64le(0, 0, 1, 0);
+        let xnqr = ModInt256ct::<M0, M1, M2, M3>::w64le(nqr as u64, 0, 0, 0);
+        let tt = ModInt256ct::<M0, M1, M2, M3>::w64le(0, 0, 1, 0);
         let corr128 = [
             -tt,
-            ModInt256::<M0, M1, M2, M3>::ZERO,
+            ModInt256ct::<M0, M1, M2, M3>::ZERO,
             tt,
         ];
         for i in 0..300 {
@@ -2223,10 +2235,10 @@ mod tests {
             sh.update(((3 * i + 2) as u64).to_le_bytes());
             let vx = sh.finalize_reset();
             check_gf_ops::<M0, M1, M2, M3>(&va, &vb, &vx);
-            assert!(ModInt256::<M0, M1, M2, M3>::decode_reduce(&va).iszero() == 0);
-            assert!(ModInt256::<M0, M1, M2, M3>::decode_reduce(&va).equals(ModInt256::<M0, M1, M2, M3>::decode_reduce(&vb)) == 0);
+            assert!(ModInt256ct::<M0, M1, M2, M3>::decode_reduce(&va).iszero() == 0);
+            assert!(ModInt256ct::<M0, M1, M2, M3>::decode_reduce(&va).equals(ModInt256ct::<M0, M1, M2, M3>::decode_reduce(&vb)) == 0);
             if nqr != 0 {
-                let s = ModInt256::<M0, M1, M2, M3>::decode_reduce(&va).square();
+                let s = ModInt256ct::<M0, M1, M2, M3>::decode_reduce(&va).square();
                 let s2 = s * xnqr;
                 assert!(s.legendre() == 1);
                 assert!(s2.legendre() == -1);
@@ -2239,10 +2251,10 @@ mod tests {
                 assert!(t2.iszero() == 0xFFFFFFFF);
             }
 
-            let a = ModInt256::<M0, M1, M2, M3>::decode_reduce(&va);
+            let a = ModInt256ct::<M0, M1, M2, M3>::decode_reduce(&va);
             let (c0, c1) = a.split_vartime();
-            let b0 = ModInt256::<M0, M1, M2, M3>::from_i128(c0);
-            let b1 = ModInt256::<M0, M1, M2, M3>::from_i128(c1);
+            let b0 = ModInt256ct::<M0, M1, M2, M3>::from_i128(c0);
+            let b1 = ModInt256ct::<M0, M1, M2, M3>::from_i128(c1);
             let mut ok = false;
             for k1 in 0..3 {
                 let ah = a * (b1 + corr128[k1]);
@@ -2304,7 +2316,7 @@ mod tests {
 
     #[test]
     fn gfp256_batch_invert() {
-        type GF = ModInt256<0xFFFFFFFFFFFFFFFF, 0x00000000FFFFFFFF,
+        type GF = ModInt256ct<0xFFFFFFFFFFFFFFFF, 0x00000000FFFFFFFF,
                             0x0000000000000000, 0xFFFFFFFF00000001>;
         let mut xx = [GF::ZERO; 300];
         let mut sh = Sha256::new();
@@ -2327,7 +2339,7 @@ mod tests {
 
     #[test]
     fn ttinv() {
-        type GF = ModInt256<0xF3B9CAC2FC632551, 0xBCE6FAADA7179E84,
+        type GF = ModInt256ct<0xF3B9CAC2FC632551, 0xBCE6FAADA7179E84,
                             0xFFFFFFFFFFFFFFFF, 0xFFFFFFFF00000000>;
         let num = GF::from_u32(1);
         let den = -GF::from_u32(3);

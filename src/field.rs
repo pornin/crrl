@@ -16,6 +16,9 @@ pub use crate::backend::GF25519;
 #[cfg(feature = "modint256")]
 pub use crate::backend::ModInt256;
 
+#[cfg(feature = "modint256")]
+pub use crate::backend::ModInt256ct;
+
 #[cfg(feature = "gfsecp256k1")]
 pub use crate::backend::GFsecp256k1;
 
@@ -24,3 +27,6 @@ pub use crate::backend::GFp256;
 
 #[cfg(feature = "gf448")]
 pub use crate::backend::GF448;
+
+#[cfg(feature = "gfb254")]
+pub use crate::backend::{GFb127, GFb254};

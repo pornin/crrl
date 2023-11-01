@@ -1,78 +1,7 @@
-mod zz;
-pub use zz::{Zu128, Zu256, Zu384};
-
-#[cfg(any(
-    feature = "gf255",
-    feature = "gf255e",
-    feature = "gf255s",
-    feature = "gf25519",
-))]
-pub mod gf255;
-
-#[cfg(any(
-    feature = "gf255",
-    feature = "gf255e",
-    feature = "gf255s",
-    feature = "gf25519",
-))]
-pub use gf255::GF255;
-
-#[cfg(feature = "gf255e")]
-pub type GF255e = GF255<18651>;
-
-#[cfg(feature = "gf255s")]
-pub type GF255s = GF255<3957>;
-
-#[cfg(feature = "gf25519")]
-pub type GF25519 = GF255<19>;
-
-#[cfg(any(
-    feature = "modint256",
-    feature = "gfp256",
-))]
-pub mod modint;
-
-#[cfg(feature = "modint256")]
-pub use modint::ModInt256;
-
-#[cfg(feature = "modint256")]
-pub type ModInt256ct<const M0: u64, const M1: u64, const M2: u64, const M3: u64> = ModInt256<M0, M1, M2, M3>;
-
-#[cfg(feature = "gfp256")]
-pub type GFp256 = modint::ModInt256<
-    0xFFFFFFFFFFFFFFFF, 0x00000000FFFFFFFF,
-    0x0000000000000000, 0xFFFFFFFF00000001>;
-
-#[cfg(feature = "gfp256")]
-impl GFp256 {
-    /// Encodes a scalar element into bytes (little-endian).
-    pub fn encode(self) -> [u8; 32] {
-        self.encode32()
-    }
-}
-
-#[cfg(feature = "secp256k1")]
-pub mod gfsecp256k1;
-
-#[cfg(feature = "secp256k1")]
-pub use gfsecp256k1::GFsecp256k1;
-
-#[cfg(feature = "gf448")]
-pub mod gf448;
-
-#[cfg(feature = "gf448")]
-pub use gf448::GF448;
-
-pub mod lagrange;
-
-#[cfg(feature = "gfgen")]
-pub mod gfgen;
-
-#[cfg(feature = "gfb254")]
-pub mod gfb254_m32;
-
-#[cfg(feature = "gfb254")]
-pub use gfb254_m32::{GFb127, GFb254};
+// We define here the 32-bit variants of addcarry, umull,...
+// They are meant to be used by code that requires 32-bit computations
+// even on 64-bit platforms, because the architecture's 64-bit multiplication
+// opcode is not constant-time.
 
 // Carrying addition and subtraction should use u32::carrying_add()
 // and u32::borrowing_sub(), but these functions are currently only
@@ -81,11 +10,11 @@ pub use gfb254_m32::{GFb127, GFb254};
 // Add with carry; carry is 0 or 1.
 // (x, y, c_in) -> x + y + c_in mod 2^32, c_out
 
-#[cfg(target_arch = "x86")]
+#[cfg(target_arch = "x86_64")]
 #[allow(dead_code)]
 #[inline(always)]
 pub(crate) fn addcarry_u32(x: u32, y: u32, c: u8) -> (u32, u8) {
-    use core::arch::x86::_addcarry_u32;
+    use core::arch::x86_64::_addcarry_u32;
     unsafe {
         let mut d = 0u32;
         let cc = _addcarry_u32(c, x, y, &mut d);
@@ -93,7 +22,7 @@ pub(crate) fn addcarry_u32(x: u32, y: u32, c: u8) -> (u32, u8) {
     }
 }
 
-#[cfg(not(target_arch = "x86"))]
+#[cfg(not(target_arch = "x86_64"))]
 #[allow(dead_code)]
 #[inline(always)]
 pub(crate) const fn addcarry_u32(x: u32, y: u32, c: u8) -> (u32, u8) {
@@ -104,11 +33,11 @@ pub(crate) const fn addcarry_u32(x: u32, y: u32, c: u8) -> (u32, u8) {
 // Subtract with borrow; borrow is 0 or 1.
 // (x, y, c_in) -> x - y - c_in mod 2^32, c_out
 
-#[cfg(target_arch = "x86")]
+#[cfg(target_arch = "x86_64")]
 #[allow(dead_code)]
 #[inline(always)]
 pub(crate) fn subborrow_u32(x: u32, y: u32, c: u8) -> (u32, u8) {
-    use core::arch::x86::_subborrow_u32;
+    use core::arch::x86_64::_subborrow_u32;
     unsafe {
         let mut d = 0u32;
         let cc = _subborrow_u32(c, x, y, &mut d);
@@ -116,7 +45,7 @@ pub(crate) fn subborrow_u32(x: u32, y: u32, c: u8) -> (u32, u8) {
     }
 }
 
-#[cfg(not(target_arch = "x86"))]
+#[cfg(not(target_arch = "x86_64"))]
 #[allow(dead_code)]
 #[inline(always)]
 pub(crate) const fn subborrow_u32(x: u32, y: u32, c: u8) -> (u32, u8) {
@@ -189,7 +118,8 @@ pub(crate) const fn sgnw(x: u32) -> u32 {
 // includes an explicit test and a conditional jump for that case, and that
 // is not (in general) constant-time.
 #[cfg(any(
-    all(target_arch = "x86", target_feature = "lzcnt"),
+    all(target_arch = "x86_64", target_feature = "lzcnt"),
+    target_arch = "aarch64",
     ))]
 #[allow(dead_code)]
 #[inline(always)]
@@ -198,7 +128,8 @@ pub(crate) const fn lzcnt(x: u32) -> u32 {
 }
 
 #[cfg(not(any(
-    all(target_arch = "x86", target_feature = "lzcnt"),
+    all(target_arch = "x86_64", target_feature = "lzcnt"),
+    target_arch = "aarch64",
     )))]
 #[allow(dead_code)]
 pub(crate) const fn lzcnt(x: u32) -> u32 {

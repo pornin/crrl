@@ -1,3 +1,37 @@
+// The zz module defines the Zu* type (custom non-modular integers with
+// sizes of 128, 256 or 384 bits, with some constant-time operation to
+// support scalar splitting in GLV and GLS curves). On aarch64 we use a
+// 32-bit version, because the Arm Cortex-A55 has non-constant-time 64-bit
+// multiplies (but 32-bit multiplies are constant-time).
+
+#[cfg(any(
+    feature = "zz32",
+    all(
+        not(feature = "zz64"),
+        target_arch = "aarch64")))]
+mod zz32;
+
+#[cfg(any(
+    feature = "zz32",
+    all(
+        not(feature = "zz64"),
+        target_arch = "aarch64")))]
+pub use zz32::{Zu128, Zu256, Zu384};
+
+#[cfg(any(
+    feature = "zz64",
+    all(
+        not(feature = "zz32"),
+        not(target_arch = "aarch64"))))]
+mod zz;
+
+#[cfg(any(
+    feature = "zz64",
+    all(
+        not(feature = "zz32"),
+        not(target_arch = "aarch64"))))]
+pub use zz::{Zu128, Zu256, Zu384};
+
 // Module gf255 defines the generic GF255<MQ> type, with 64-bit limbs.
 // It is used for GF255e and GF255s. For GF25519, an alternate implementation
 // with 51-bit limbs is provided (in module gf25519) and used in some cases.
@@ -80,6 +114,24 @@ pub type GF25519 = GF255<19>;
 ))]
 pub mod modint;
 
+#[cfg(feature = "modint256")]
+pub use modint::ModInt256;
+
+#[cfg(all(
+    feature = "modint256",
+    not(target_arch = "aarch64")))]
+pub type ModInt256ct<const M0: u64, const M1: u64, const M2: u64, const M3: u64> = ModInt256<M0, M1, M2, M3>;
+
+#[cfg(all(
+    feature = "modint256",
+    target_arch = "aarch64"))]
+pub mod modint32;
+
+#[cfg(all(
+    feature = "modint256",
+    target_arch = "aarch64"))]
+pub use modint32::ModInt256ct;
+
 /* disabled -- not faster than the generic code
 #[cfg(feature = "gfp256")]
 pub mod gfp256;
@@ -117,6 +169,93 @@ pub mod lagrange;
 
 #[cfg(feature = "gfgen")]
 pub mod gfgen;
+
+#[cfg(all(
+    feature = "gfb254",
+    not(any(
+        feature = "gfb254_m64",
+        feature = "gfb254_arm64pmull")),
+    any(
+        feature = "gfb254_x86clmul",
+        all(
+            target_arch = "x86_64",
+            target_feature = "sse4.1",
+            target_feature = "pclmulqdq"))))]
+pub mod gfb254_x86clmul;
+
+#[cfg(all(
+    feature = "gfb254",
+    not(any(
+        feature = "gfb254_m64",
+        feature = "gfb254_arm64pmull")),
+    any(
+        feature = "gfb254_x86clmul",
+        all(
+            target_arch = "x86_64",
+            target_feature = "sse4.1",
+            target_feature = "pclmulqdq"))))]
+pub use gfb254_x86clmul::{GFb127, GFb254};
+
+#[cfg(all(
+    feature = "gfb254",
+    not(any(
+        feature = "gfb254_x86clmul",
+        feature = "gfb254_m64")),
+    any(
+        feature = "gfb254_arm64pmull",
+        all(
+            target_arch = "aarch64",
+            target_feature = "aes"))))]
+pub mod gfb254_arm64pmull;
+
+#[cfg(all(
+    feature = "gfb254",
+    not(any(
+        feature = "gfb254_x86clmul",
+        feature = "gfb254_m64")),
+    any(
+        feature = "gfb254_arm64pmull",
+        all(
+            target_arch = "aarch64",
+            target_feature = "aes"))))]
+pub use gfb254_arm64pmull::{GFb127, GFb254};
+
+#[cfg(all(
+    feature = "gfb254",
+    not(any(
+        feature = "gfb254_x86clmul",
+        feature = "gfb254_arm64pmull")),
+    any(
+        feature = "gfb254_m64",
+        not(any(
+            all(
+                target_arch = "x86_64",
+                target_feature = "sse4.1",
+                target_feature = "pclmulqdq"),
+            all(
+                target_arch = "aarch64",
+                target_feature = "aes"))))))]
+pub mod gfb254_m64;
+
+#[cfg(all(
+    feature = "gfb254",
+    not(any(
+        feature = "gfb254_x86clmul",
+        feature = "gfb254_arm64pmull")),
+    any(
+        feature = "gfb254_m64",
+        not(any(
+            all(
+                target_arch = "x86_64",
+                target_feature = "sse4.1",
+                target_feature = "pclmulqdq"),
+            all(
+                target_arch = "aarch64",
+                target_feature = "aes"))))))]
+pub use gfb254_m64::{GFb127, GFb254};
+
+// The 32-bit variants of the addcarry, umull,... functions.
+pub(crate) mod util32;
 
 // Carrying addition and subtraction should use u64::carrying_add()
 // and u64::borrowing_sub(), but these functions are currently only

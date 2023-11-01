@@ -5,6 +5,7 @@ use super::{addcarry_u64, subborrow_u64, umull, umull_x2, umull_x2_add, sgnw, lz
 use super::lagrange::{lagrange253_vartime};
 
 #[derive(Clone, Copy, Debug)]
+#[repr(align(32))]
 pub struct GF255<const MQ: u64>([u64; 4]);
 
 /// Special container for "not reduced" values returned by `add_noreduce()`
@@ -1736,6 +1737,106 @@ impl<const MQ: u64> GF255<MQ> {
         let (d3, _)  = adc(d3, 0, cc);
 
         Self([ d0, d1, d2, d3 ])
+    }
+
+    /// Constant-time table lookup: given a table of 48 field elements,
+    /// and an index `j` in the 0 to 15 range, return the elements of
+    /// index `j*3` to `j*3+2`. If `j` is not in the 0 to 15 range
+    /// (inclusive), then this returns three zeros.
+    pub fn lookup16_x3(tab: &[Self; 48], j: u32) -> [Self; 3] {
+        #[cfg(not(all(target_arch = "x86_64", target_feature = "avx2")))]
+        {
+            let mut d = [Self::ZERO; 3];
+            for i in 0..16 {
+                let w = ((j.wrapping_sub(i as u32)
+                    | (i as u32).wrapping_sub(j)) >> 31).wrapping_sub(1);
+                d[0].set_cond(&tab[3 * i + 0], w);
+                d[1].set_cond(&tab[3 * i + 1], w);
+                d[2].set_cond(&tab[3 * i + 2], w);
+            }
+            d
+        }
+        #[cfg(all(target_arch = "x86_64", target_feature = "avx2"))]
+        unsafe {
+            use core::arch::x86_64::*;
+
+            let xj = _mm256_set1_epi32(j as i32);
+            let mut xi = _mm256_setzero_si256();
+            let mut a0 = _mm256_setzero_si256();
+            let mut a1 = _mm256_setzero_si256();
+            let mut a2 = _mm256_setzero_si256();
+            for i in 0..16 {
+                let m = _mm256_cmpeq_epi32(xi, xj);
+                xi = _mm256_add_epi32(xi, _mm256_set1_epi32(1));
+                a0 = _mm256_blendv_epi8(a0,
+                    _mm256_loadu_si256(core::mem::transmute(
+                        core::ptr::addr_of!(tab[3 * i + 0]))), m);
+                a1 = _mm256_blendv_epi8(a1,
+                    _mm256_loadu_si256(core::mem::transmute(
+                        core::ptr::addr_of!(tab[3 * i + 1]))), m);
+                a2 = _mm256_blendv_epi8(a2,
+                    _mm256_loadu_si256(core::mem::transmute(
+                        core::ptr::addr_of!(tab[3 * i + 2]))), m);
+            }
+            [
+                core::mem::transmute(a0),
+                core::mem::transmute(a1),
+                core::mem::transmute(a2),
+            ]
+        }
+    }
+
+    /// Constant-time table lookup: given a table of 64 field elements,
+    /// and an index `j` in the 0 to 15 range, return the elements of
+    /// index `j*4` to `j*4+3`. If `j` is not in the 0 to 15 range
+    /// (inclusive), then this returns four zeros.
+    pub fn lookup16_x4(tab: &[Self; 64], j: u32) -> [Self; 4] {
+        #[cfg(not(all(target_arch = "x86_64", target_feature = "avx2")))]
+        {
+            let mut d = [Self::ZERO; 4];
+            for i in 0..16 {
+                let w = ((j.wrapping_sub(i as u32)
+                    | (i as u32).wrapping_sub(j)) >> 31).wrapping_sub(1);
+                d[0].set_cond(&tab[4 * i + 0], w);
+                d[1].set_cond(&tab[4 * i + 1], w);
+                d[2].set_cond(&tab[4 * i + 2], w);
+                d[3].set_cond(&tab[4 * i + 3], w);
+            }
+            d
+        }
+        #[cfg(all(target_arch = "x86_64", target_feature = "avx2"))]
+        unsafe {
+            use core::arch::x86_64::*;
+
+            let xj = _mm256_set1_epi32(j as i32);
+            let mut xi = _mm256_setzero_si256();
+            let mut a0 = _mm256_setzero_si256();
+            let mut a1 = _mm256_setzero_si256();
+            let mut a2 = _mm256_setzero_si256();
+            let mut a3 = _mm256_setzero_si256();
+            for i in 0..16 {
+                let m = _mm256_cmpeq_epi32(xi, xj);
+                xi = _mm256_add_epi32(xi, _mm256_set1_epi32(1));
+                a0 = _mm256_blendv_epi8(a0,
+                    _mm256_loadu_si256(core::mem::transmute(
+                        core::ptr::addr_of!(tab[4 * i + 0]))), m);
+                a1 = _mm256_blendv_epi8(a1,
+                    _mm256_loadu_si256(core::mem::transmute(
+                        core::ptr::addr_of!(tab[4 * i + 1]))), m);
+                a2 = _mm256_blendv_epi8(a2,
+                    _mm256_loadu_si256(core::mem::transmute(
+                        core::ptr::addr_of!(tab[4 * i + 2]))), m);
+                a3 = _mm256_blendv_epi8(a3,
+                    _mm256_loadu_si256(core::mem::transmute(
+                        core::ptr::addr_of!(tab[4 * i + 3]))), m);
+            }
+            [
+                core::mem::transmute(a0),
+                core::mem::transmute(a1),
+                core::mem::transmute(a2),
+                core::mem::transmute(a3),
+            ]
+        }
     }
 }
 
