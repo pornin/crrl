@@ -72,7 +72,7 @@ impl GF448 {
     // the field order) provided as seven 64-bit limbs (in high-to-low order).
     #[inline(always)]
     pub fn from_w64be(x: [u64; 7]) -> Self {
-        Self(x)
+        Self([ x[6], x[5], x[4], x[3], x[2], x[1], x[0] ])
     }
 
     // Create an element by converting to provided integer (implicitly
