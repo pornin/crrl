@@ -623,7 +623,7 @@ impl<const M0: u64, const M1: u64, const M2: u64, const M3: u64> ModInt256<M0, M
         //   (a0*a3 + a1*a2)  * 2^192
         //   a1*a3            * 2^256
         //   a2*a3            * 2^320
-        // for a total which is stlightly below 2^448, which means that
+        // for a total which is slightly below 2^448, which means that
         // the value fits on e1..e6 (no possible carry into e7).
         let (e1, e2) = umull(a0, a1);
         let (e3, e4) = umull(a0, a3);
@@ -746,7 +746,7 @@ impl<const M0: u64, const M1: u64, const M2: u64, const M3: u64> ModInt256<M0, M
             let (e3, hi) = umull_add2(f, M1, e3, hi);
             let (e4, hi) = umull_add2(f, M2, e4, hi);
             let (e5, hi) = umull_add2(f, M3, e5, hi);
-            let (e6, cc) = addcarry_u64(e6, hi, cc);
+            let (e6, cc) = addcarry_u64(e6, hi, 0);
             let (e7, cc) = addcarry_u64(e7, 0, cc);
             let (e8, _)  = addcarry_u64(e8 as u64, 0, cc);
             let f = e3.wrapping_mul(Self::M0I);
@@ -754,7 +754,7 @@ impl<const M0: u64, const M1: u64, const M2: u64, const M3: u64> ModInt256<M0, M
             let (e4, hi) = umull_add2(f, M1, e4, hi);
             let (e5, hi) = umull_add2(f, M2, e5, hi);
             let (e6, hi) = umull_add2(f, M3, e6, hi);
-            let (e7, cc) = addcarry_u64(e7, hi, cc);
+            let (e7, cc) = addcarry_u64(e7, hi, 0);
             let (e8, _)  = addcarry_u64(e8 as u64, 0, cc);
 
             // 4. Conditional subtraction.
@@ -2757,6 +2757,10 @@ mod tests {
             ModInt256::<M0, M1, M2, M3>::ZERO,
             tt,
         ];
+        let one = ModInt256::<M0, M1, M2, M3>::ONE;
+        let (y, r) = one.sqrt();
+        assert!(r == 0xFFFFFFFF);
+        assert!(y.equals(ModInt256::<M0, M1, M2, M3>::MINUS_ONE) == 0xFFFFFFFF);
         for i in 0..300 {
             sh.update(((3 * i + 0) as u64).to_le_bytes());
             let va = sh.finalize_reset();
@@ -2841,6 +2845,14 @@ mod tests {
         test_ring::< 0xFFFFFFFFFFFFFF43,
                      0xFFFFFFFFFFFFFFFF,
                      0xFFFFFFFFFFFFFFFF,
+                     0xFFFFFFFFFFFFFFFF >(2);
+    }
+
+    #[test]
+    fn gfspec3_ops() {
+        test_ring::< 0x20CD9255FD615923,
+                     0xACAFC103CD968A25,
+                     0xFFFFFFFFFFFFFFFE,
                      0xFFFFFFFFFFFFFFFF >(2);
     }
 
