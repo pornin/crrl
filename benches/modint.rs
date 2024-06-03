@@ -195,6 +195,31 @@ fn bench_modint256_split<const M0: u64, const M1: u64,
     ((tt[4] as f64) / 512.0, vv[0].encode32()[0])
 }
 
+fn bench_modint256_reduce<const M0: u64, const M1: u64,
+                          const M2: u64, const M3: u64>() -> (f64, u8)
+{
+    let mut x = ModInt256::<M0, M1, M2, M3>::ZERO;
+    let mut buf = [0u8; 48];
+    for i in 0..12 {
+        buf[(4 * i)..(4 * i + 4)].copy_from_slice(
+            &(core_cycles() as u32).to_le_bytes());
+    }
+    let mut tt = [0; 10];
+    for i in 0..10 {
+        let begin = core_cycles();
+        for _ in 0..10000 {
+            x.set_decode_reduce(&buf);
+            let xe = x.encode32();
+            buf[16..].copy_from_slice(&xe);
+            buf[..16].copy_from_slice(&xe[8..24]);
+        }
+        let end = core_cycles();
+        tt[i] = end.wrapping_sub(begin);
+    }
+    tt.sort();
+    ((tt[4] as f64) / 10000.0, buf[0])
+}
+
 fn main() {
     let mut bx = 0u8;
 
@@ -245,6 +270,10 @@ fn main() {
     let (f3, b3) = bench_modint256_split::<0xFFFFFFFFFFFFFF43, 0xFFFFFFFFFFFFFFFF, 0xFFFFFFFFFFFFFFFF, 0xFFFFFFFFFFFFFFFF>();
     bx ^= b1 ^ b2 ^ b3;
     println!("ModInt256 split (var)  {:11.2} {:11.2} {:11.2}", f1, f2, f3);
+
+    let (f1, b1) = bench_modint256_reduce::<0x43E1F593F0000001, 0x2833E84879B97091, 0xB85045B68181585D, 0x30644E72E131A029>();
+    println!("ModInt256 reduce (gen) {:11.2}", f1);
+    bx ^= b1;
 
     println!("{}", bx);
 }
