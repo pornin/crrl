@@ -1247,7 +1247,6 @@ impl GFp256 {
         let z16 = z8.xsquare(8) * z8;
         let z32 = z16.xsquare(16) * z16;
         let mut y = ((z32.xsquare(32) * z).xsquare(96) * z).xsquare(94);
-        y.set_normalized();
 
         // Normalize y and negate it if necessary to set the low bit to 0.
         y.set_normalized();
@@ -1367,8 +1366,7 @@ impl GFp256 {
     }
 
     // Encode this value over exactly 32 bytes. Encoding is always canonical
-    // (little-endian encoding of the value in the 0..q-1 range, top bit
-    // of the last byte is always 0).
+    // (little-endian encoding of the value in the 0..q-1 range).
     #[inline(always)]
     pub fn encode32(self) -> [u8; 32] {
         let mut r = self;
@@ -1382,8 +1380,7 @@ impl GFp256 {
     }
 
     // Encode this value over exactly 32 bytes. Encoding is always canonical
-    // (little-endian encoding of the value in the 0..q-1 range, top bit
-    // of the last byte is always 0).
+    // (little-endian encoding of the value in the 0..q-1 range).
     #[inline(always)]
     pub fn encode(self) -> [u8; 32] {
         self.encode32()
