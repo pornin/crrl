@@ -15,7 +15,7 @@ use core::convert::TryFrom;
 // terminates, but the real (c0, c1) may be larger than 128 bits, and thus
 // only truncated results are returned.
 #[allow(dead_code)]
-pub(crate) fn lagrange253_vartime(k: &[u64; 4], n: &[u64; 4]) -> (i128, i128) {
+pub fn lagrange253_vartime(k: &[u64; 4], n: &[u64; 4]) -> (i128, i128) {
     let (v0, v1) = lagrange256_vartime(k, n, 254);
     let c0 = ((v0[0] as u128) | ((v0[1] as u128) << 64)) as i128;
     let c1 = ((v1[0] as u128) | ((v1[1] as u128) << 64)) as i128;
@@ -253,7 +253,7 @@ macro_rules! define_bigint { ($typename:ident, $bitlen:expr) => {
 macro_rules! define_lagrange { ($name:ident, $n0:ident, $n1:ident, $n2:ident, $n3:ident) => {
 
     #[allow(dead_code)]
-    pub(crate) fn $name(k: &[u64; $n1::N], n: &[u64; $n1::N], max_bitlen: u32)
+    pub fn $name(k: &[u64; $n1::N], n: &[u64; $n1::N], max_bitlen: u32)
         -> ([u64; $n0::N], [u64; $n0::N])
     {
         // Product of integers. Operands must be non-negative.
@@ -464,7 +464,7 @@ define_lagrange!(lagrange512_vartime, ZInt256, ZInt512, ZInt768, ZInt1024);
 // If the minimal-size vector does not fit in (c0,c1) then it is truncated.
 // c0 and c1 use _signed_ little-endian notation.
 #[allow(dead_code)]
-pub(crate) fn lagrange_vartime(k: &[u64], n: &[u64], max_bitlen: u32,
+pub fn lagrange_vartime(k: &[u64], n: &[u64], max_bitlen: u32,
     c0: &mut [u64], c1: &mut [u64])
 {
     match n.len() {
@@ -517,7 +517,7 @@ pub(crate) fn lagrange_vartime(k: &[u64], n: &[u64], max_bitlen: u32,
 macro_rules! define_lagrange_spec { ($name:ident, $n0:ident, $n1:ident, $n3:ident) => {
 
     #[allow(dead_code)]
-    pub(crate) fn $name(
+    pub fn $name(
         a0: &[u64; $n1::N], a1: &[u64; $n1::N],
         b0: &[u64; $n1::N], b1: &[u64; $n1::N])
         -> ([u64; $n0::N], [u64; $n0::N], u32)
@@ -651,7 +651,7 @@ define_lagrange_spec!(lagrange192_spec_vartime, ZInt128, ZInt192, ZInt384);
 //
 // Values a and b are provided as two 64-bit words each (little-endian order).
 #[allow(dead_code)]
-pub(crate) fn lagrange128_basisconv_vartime(a: &[u64; 2], b: &[u64; 2])
+pub fn lagrange128_basisconv_vartime(a: &[u64; 2], b: &[u64; 2])
     -> (i64, i64, i64, i64, u32)
 {
     // Product of two 128-bit integers.
