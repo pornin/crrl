@@ -2666,7 +2666,7 @@ mod tests {
 
     use super::{GF255};
     use num_bigint::{BigInt, Sign};
-    use sha2::{Sha256, Digest};
+    use crate::sha2::Sha256;
 
     /*
     fn print<const MQ: u64>(name: &str, v: GF255<MQ>) {

@@ -173,3 +173,6 @@ pub mod lms;
 
 #[cfg(feature = "blake2s")]
 pub mod blake2s;
+
+pub mod sha2;
+pub mod sha3;

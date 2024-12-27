@@ -114,7 +114,7 @@ pub fn x448_base(scalar: &[u8; 56]) -> [u8; 56] {
 mod tests {
 
     use super::{x448, x448_base};
-    use sha2::{Sha512, Digest};
+    use crate::sha2::Sha512;
 
     #[test]
     fn x448_mc() {

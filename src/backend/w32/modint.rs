@@ -2033,7 +2033,7 @@ mod tests {
 
     use super::ModInt256;
     use num_bigint::{BigInt, Sign};
-    use sha2::{Sha256, Digest};
+    use crate::sha2::Sha256;
 
     /* unused
     fn print<const M0: u64, const M1: u64, const M2: u64, const M3: u64>

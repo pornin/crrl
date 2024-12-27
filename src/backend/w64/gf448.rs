@@ -2142,7 +2142,7 @@ mod tests {
 
     use super::{GF448};
     use num_bigint::{BigInt, Sign};
-    use sha2::{Sha512, Digest};
+    use crate::sha2::Sha512;
 
     /*
     fn print(name: &str, v: GF448) {

@@ -2573,7 +2573,7 @@ mod tests {
 
     use super::ModInt256;
     use num_bigint::{BigInt, Sign};
-    use sha2::{Sha256, Digest};
+    use crate::sha2::Sha256;
 
     /* unused
     use std::fmt;

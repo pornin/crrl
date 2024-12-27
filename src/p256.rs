@@ -117,7 +117,7 @@
 
 use core::ops::{Add, AddAssign, Mul, MulAssign, Neg, Sub, SubAssign};
 use super::field::{GFp256, ModInt256};
-use sha2::{Sha256, Sha512, Digest};
+use crate::sha2::{Sha256, Sha512};
 use super::{CryptoRng, RngCore};
 
 #[cfg(feature = "alloc")]
@@ -2952,7 +2952,7 @@ static PRECOMP_G195: [PointAffine; 16] = [
 mod tests {
 
     use super::{Point, Scalar, PrivateKey};
-    use sha2::{Sha256, Digest};
+    use crate::sha2::Sha256;
 
     #[cfg(feature = "alloc")]
     use crate::Vec;

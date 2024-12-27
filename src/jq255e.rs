@@ -2457,7 +2457,7 @@ static PRECOMP_B130_ODD: [PointAffineExtended; 8] = [
 mod tests {
 
     use super::{Point, Scalar, PrivateKey, PublicKey};
-    use sha2::{Sha256, Digest};
+    use crate::sha2::Sha256;
     use crate::blake2s::Blake2s256;
     use crate::field::GF255e;
 

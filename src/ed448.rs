@@ -80,7 +80,7 @@
 use core::ops::{Add, AddAssign, Mul, MulAssign, Neg, Sub, SubAssign};
 use core::convert::TryFrom;
 use super::field::GF448;
-use sha3::{Shake256, digest::{Update, ExtendableOutputReset, XofReader}};
+use crate::sha3::SHAKE256;
 use super::{CryptoRng, RngCore};
 use crate::backend::define_gfgen;
 use crate::backend::define_gfgen_tests;
@@ -1481,10 +1481,10 @@ impl PrivateKey {
         bseed[..].copy_from_slice(seed);
 
         // Hash the seed with SHAKE256, with a 114-byte output.
-        let mut sh = Shake256::default();
-        sh.update(seed);
+        let mut sh = SHAKE256::new();
+        sh.inject(seed);
         let mut hh = [0u8; 114];
-        sh.finalize_xof_reset().read(&mut hh);
+        sh.flip_extract_reset(&mut hh);
 
         // Prune the first half and decode it as a scalar (with
         // reduction).
@@ -1557,17 +1557,17 @@ impl PrivateKey {
     /// Inner signature generation function.
     fn sign_inner(self, phflag: u8, ctx: &[u8], m: &[u8]) -> [u8; 114] {
         // SHAKE256(dom4(F, C) || prefix || PH(M), 114) -> scalar r
-        let mut sh = Shake256::default();
+        let mut sh = SHAKE256::new();
         assert!(ctx.len() <= 255);
         let clen = ctx.len() as u8;
-        sh.update(&HASH_HEAD);
-        sh.update(&[phflag]);
-        sh.update(&[clen]);
-        sh.update(ctx);
-        sh.update(&self.h);
-        sh.update(m);
+        sh.inject(&HASH_HEAD);
+        sh.inject(&[phflag]);
+        sh.inject(&[clen]);
+        sh.inject(ctx);
+        sh.inject(&self.h);
+        sh.inject(m);
         let mut hv1 = [0u8; 114];
-        sh.finalize_xof_reset().read(&mut hv1);
+        sh.flip_extract_reset(&mut hv1);
         let r = Scalar::decode_reduce(&hv1);
 
         // R = r*B
@@ -1575,15 +1575,15 @@ impl PrivateKey {
         let R_enc = R.encode();
 
         // SHAKE256(dom4(F, C) || R || A || PH(M), 114) -> scalar k
-        sh.update(&HASH_HEAD);
-        sh.update(&[phflag]);
-        sh.update(&[clen]);
-        sh.update(ctx);
-        sh.update(&R_enc);
-        sh.update(&self.public_key.encoded);
-        sh.update(m);
+        sh.inject(&HASH_HEAD);
+        sh.inject(&[phflag]);
+        sh.inject(&[clen]);
+        sh.inject(ctx);
+        sh.inject(&R_enc);
+        sh.inject(&self.public_key.encoded);
+        sh.inject(m);
         let mut hv2 = [0u8; 114];
-        sh.finalize_xof_reset().read(&mut hv2);
+        sh.flip_extract_reset(&mut hv2);
         let k = Scalar::decode_reduce(&hv2);
 
         // Signature is (R, S) with S = r + k*s mod L
@@ -1696,20 +1696,20 @@ impl PublicKey {
             return false;
         }
 
-        // SHA-512(dom4(F, C) || R || A || PH(M)) -> scalar k
+        // SHAKE256(dom4(F, C) || R || A || PH(M)) -> scalar k
         // R is encoded over the first 57 bytes of the signature.
-        let mut sh = Shake256::default();
+        let mut sh = SHAKE256::new();
         assert!(ctx.len() <= 255);
         let clen = ctx.len() as u8;
-        sh.update(&HASH_HEAD);
-        sh.update(&[phflag]);
-        sh.update(&[clen]);
-        sh.update(ctx);
-        sh.update(R_enc);
-        sh.update(&self.encoded);
-        sh.update(m);
+        sh.inject(&HASH_HEAD);
+        sh.inject(&[phflag]);
+        sh.inject(&[clen]);
+        sh.inject(ctx);
+        sh.inject(R_enc);
+        sh.inject(&self.encoded);
+        sh.inject(m);
         let mut hv2 = [0u8; 114];
-        sh.finalize_xof_reset().read(&mut hv2);
+        sh.flip_extract_reset(&mut hv2);
         let k = Scalar::decode_reduce(&hv2);
 
         // Check the verification equation 4*S*B = 4*R + 4*k*A.
@@ -2647,7 +2647,7 @@ static PRECOMP_B375: [PointAffine; 16] = [
 mod tests {
 
     use super::{Point, Scalar, PrivateKey, PublicKey};
-    use sha3::{Shake256, digest::{Update, ExtendableOutputReset, XofReader}};
+    use crate::sha3::SHAKE256;
 
     /* unused
     use std::fmt;
@@ -2830,15 +2830,15 @@ mod tests {
 
     #[test]
     fn mul() {
-        let mut sh = Shake256::default();
+        let mut sh = SHAKE256::new();
         for i in 0..20 {
             // Build pseudorandom s1 and s2
             let mut v1 = [0u8; 64];
-            sh.update(&((2 * i + 0) as u64).to_le_bytes());
-            sh.finalize_xof_reset().read(&mut v1);
+            sh.inject(&((2 * i + 0) as u64).to_le_bytes());
+            sh.flip_extract_reset(&mut v1);
             let mut v2 = [0u8; 64];
-            sh.update(&((2 * i + 1) as u64).to_le_bytes());
-            sh.finalize_xof_reset().read(&mut v2);
+            sh.inject(&((2 * i + 1) as u64).to_le_bytes());
+            sh.flip_extract_reset(&mut v2);
 
             let s1 = Scalar::decode_reduce(&v1);
             let s2 = Scalar::decode_reduce(&v2);
@@ -2854,18 +2854,18 @@ mod tests {
 
     #[test]
     fn mul_add_mulgen() {
-        let mut sh = Shake256::default();
+        let mut sh = SHAKE256::new();
         for i in 0..20 {
             // Build pseudorandom A, u and v
             let mut v1 = [0u8; 64];
-            sh.update(&((3 * i + 0) as u64).to_le_bytes());
-            sh.finalize_xof_reset().read(&mut v1);
+            sh.inject(&((3 * i + 0) as u64).to_le_bytes());
+            sh.flip_extract_reset(&mut v1);
             let mut v2 = [0u8; 64];
-            sh.update(&((3 * i + 1) as u64).to_le_bytes());
-            sh.finalize_xof_reset().read(&mut v2);
+            sh.inject(&((3 * i + 1) as u64).to_le_bytes());
+            sh.flip_extract_reset(&mut v2);
             let mut v3 = [0u8; 64];
-            sh.update(&((3 * i + 2) as u64).to_le_bytes());
-            sh.finalize_xof_reset().read(&mut v3);
+            sh.inject(&((3 * i + 2) as u64).to_le_bytes());
+            sh.flip_extract_reset(&mut v3);
             let A = Point::mulgen(&Scalar::decode_reduce(&v1));
             let u = Scalar::decode_reduce(&v2);
             let v = Scalar::decode_reduce(&v3);
@@ -2922,19 +2922,19 @@ mod tests {
             assert!(low[i].has_low_order() == 0xFFFFFFFF);
         }
 
-        let mut sh = Shake256::default();
+        let mut sh = SHAKE256::new();
         for i in 0..20 {
             // Build pseudorandom A, s and k
             // Compute R = s*B - k*A
             let mut v1 = [0u8; 64];
-            sh.update(&((3 * i + 0) as u64).to_le_bytes());
-            sh.finalize_xof_reset().read(&mut v1);
+            sh.inject(&((3 * i + 0) as u64).to_le_bytes());
+            sh.flip_extract_reset(&mut v1);
             let mut v2 = [0u8; 64];
-            sh.update(&((3 * i + 1) as u64).to_le_bytes());
-            sh.finalize_xof_reset().read(&mut v2);
+            sh.inject(&((3 * i + 1) as u64).to_le_bytes());
+            sh.flip_extract_reset(&mut v2);
             let mut v3 = [0u8; 64];
-            sh.update(&((3 * i + 2) as u64).to_le_bytes());
-            sh.finalize_xof_reset().read(&mut v3);
+            sh.inject(&((3 * i + 2) as u64).to_le_bytes());
+            sh.flip_extract_reset(&mut v3);
             let A = Point::mulgen(&Scalar::decode_reduce(&v1));
             let s = Scalar::decode_reduce(&v2);
             let k = Scalar::decode_reduce(&v3);
@@ -3034,10 +3034,10 @@ mod tests {
             let skey = PrivateKey::from_seed(&seed[..]);
             assert!(&Q_enc[..] == skey.public_key.encode());
             if tv.ph {
-                let mut sh = Shake256::default();
-                sh.update(&msg[..]);
+                let mut sh = SHAKE256::new();
+                sh.inject(&msg[..]);
                 let mut hm = [0u8; 64];
-                sh.finalize_xof_reset().read(&mut hm);
+                sh.flip_extract_reset(&mut hm);
                 assert!(skey.sign_ph(&ctx[..], &hm) == sig);
             } else {
                 assert!(skey.sign_ctx(&ctx[..], &msg[..]) == sig);
@@ -3048,10 +3048,10 @@ mod tests {
 
             let pkey = PublicKey::decode(&Q_enc[..]).unwrap();
             if tv.ph {
-                let mut sh = Shake256::default();
-                sh.update(&msg[..]);
+                let mut sh = SHAKE256::new();
+                sh.inject(&msg[..]);
                 let mut hm = [0u8; 64];
-                sh.finalize_xof_reset().read(&mut hm);
+                sh.flip_extract_reset(&mut hm);
                 assert!(pkey.verify_ph(&sig, &ctx[..], &hm));
                 assert!(!pkey.verify_ph(&sig, &[1u8], &hm));
                 hm[42] ^= 0x08;
@@ -3076,13 +3076,13 @@ mod tests {
         assert!(T4.isneutral() == 0x00000000);
         assert!(T4.double().isneutral() == 0x00000000);
         assert!(T4.xdouble(2).isneutral() == 0xFFFFFFFF);
-        let mut sh = Shake256::default();
+        let mut sh = SHAKE256::new();
         for i in 0..30 {
             let mut P = Point::NEUTRAL;
             if i > 0 {
-                sh.update(&(i as u64).to_le_bytes());
+                sh.inject(&(i as u64).to_le_bytes());
                 let mut v = [0u8; 64];
-                sh.finalize_xof_reset().read(&mut v);
+                sh.flip_extract_reset(&mut v);
                 P.set_mulgen(&Scalar::decode_reduce(&v[..]));
             }
             assert!(P.is_in_subgroup() == 0xFFFFFFFF);

@@ -2285,7 +2285,7 @@ impl SubAssign<&GFb254> for GFb254 {
 mod tests {
 
     use super::{GFb127, GFb254};
-    use sha2::{Sha256, Digest};
+    use crate::sha2::Sha256;
 
     /*
     fn print(name: &str, v: GFb127) {

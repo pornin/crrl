@@ -1236,7 +1236,7 @@ macro_rules! define_frost_tests { () => {
     use super::{Point, Scalar, scalar_cmp_vartime};
     use super::{compute_binding_factors, point_decode, scalar_decode};
     use crate::{CryptoRng, RngCore, RngError};
-    use sha2::{Sha512, Digest};
+    use crate::sha2::Sha512;
     use crate::Vec;
     use core::cmp::Ordering;
 
@@ -1624,7 +1624,7 @@ macro_rules! define_frost_tests { () => {
 pub mod ed25519 {
 
     pub use crate::ed25519::{Point, Scalar};
-    use sha2::{Sha512, Digest};
+    use crate::sha2::Sha512;
 
     define_frost_core!{}
 
@@ -1777,7 +1777,7 @@ pub mod ed25519 {
 #[cfg(feature = "ristretto255")]
 pub mod ristretto255 {
     pub use crate::ristretto255::{Point, Scalar};
-    use sha2::{Sha512, Digest};
+    use crate::sha2::Sha512;
 
     define_frost_core!{}
 
@@ -1916,7 +1916,7 @@ pub mod ristretto255 {
 pub mod ed448 {
 
     pub use crate::ed448::{Point, Scalar};
-    use sha3::{Shake256, digest::{Update, ExtendableOutput, XofReader}};
+    use crate::sha3::SHAKE256;
 
     define_frost_core!{}
 
@@ -1971,71 +1971,71 @@ pub mod ed448 {
     const CONTEXT_STRING: &[u8] = b"FROST-ED448-SHAKE256-v1";
 
     fn H1(msg: &[u8]) -> Scalar {
-        let mut sh = Shake256::default();
-        sh.update(CONTEXT_STRING);
-        sh.update(b"rho");
-        sh.update(msg);
+        let mut sh = SHAKE256::new();
+        sh.inject(CONTEXT_STRING);
+        sh.inject(b"rho");
+        sh.inject(msg);
         let mut buf = [0u8; 114];
-        sh.finalize_xof().read(&mut buf);
+        sh.flip_extract(&mut buf);
         Scalar::decode_reduce(&buf)
     }
 
     fn H2(gc_enc: &[u8], pk_enc: &[u8], msg: &[u8]) -> Scalar {
-        let mut sh = Shake256::default();
+        let mut sh = SHAKE256::new();
         // Prefix compatible with RFC 8032:
         //    dom4(F, C)     constant string "SigEd448"
         //    phflag         0 for raw (non pre-hashed) mode
         //    ctxlen         0 for an empty context string
-        sh.update(b"SigEd448");
-        sh.update(&[0u8; 2]);
-        sh.update(gc_enc);
-        sh.update(pk_enc);
-        sh.update(msg);
+        sh.inject(b"SigEd448");
+        sh.inject(&[0u8; 2]);
+        sh.inject(gc_enc);
+        sh.inject(pk_enc);
+        sh.inject(msg);
         let mut buf = [0u8; 114];
-        sh.finalize_xof().read(&mut buf);
+        sh.flip_extract(&mut buf);
         Scalar::decode_reduce(&buf)
     }
 
     fn H3(msg: &[u8]) -> Scalar {
-        let mut sh = Shake256::default();
-        sh.update(CONTEXT_STRING);
-        sh.update(b"nonce");
-        sh.update(msg);
+        let mut sh = SHAKE256::new();
+        sh.inject(CONTEXT_STRING);
+        sh.inject(b"nonce");
+        sh.inject(msg);
         let mut buf = [0u8; 114];
-        sh.finalize_xof().read(&mut buf);
+        sh.flip_extract(&mut buf);
         Scalar::decode_reduce(&buf)
     }
 
     fn H4(msg: &[u8]) -> [u8; 114] {
-        let mut sh = Shake256::default();
-        sh.update(CONTEXT_STRING);
-        sh.update(b"msg");
-        sh.update(msg);
+        let mut sh = SHAKE256::new();
+        sh.inject(CONTEXT_STRING);
+        sh.inject(b"msg");
+        sh.inject(msg);
         let mut r = [0u8; 114];
-        sh.finalize_xof().read(&mut r);
+        sh.flip_extract(&mut r);
         r
     }
 
     fn H5(msg: &[u8]) -> [u8; 114] {
-        let mut sh = Shake256::default();
-        sh.update(CONTEXT_STRING);
-        sh.update(b"com");
-        sh.update(msg);
+        let mut sh = SHAKE256::new();
+        sh.inject(CONTEXT_STRING);
+        sh.inject(b"com");
+        sh.inject(msg);
         let mut r = [0u8; 114];
-        sh.finalize_xof().read(&mut r);
+        sh.flip_extract(&mut r);
         r
     }
 
     fn H6(pk_enc: &[u8], sk_enc: &[u8], seed: &[u8], msg: &[u8]) -> Scalar {
-        let mut sh = Shake256::default();
-        sh.update(CONTEXT_STRING);
-        sh.update(b"single-signer");
-        sh.update(pk_enc);
-        sh.update(sk_enc);
-        sh.update(seed);
-        sh.update(msg);
+        let mut sh = SHAKE256::new();
+        sh.inject(CONTEXT_STRING);
+        sh.inject(b"single-signer");
+        sh.inject(pk_enc);
+        sh.inject(sk_enc);
+        sh.inject(seed);
+        sh.inject(msg);
         let mut buf = [0u8; 114];
-        sh.finalize_xof().read(&mut buf);
+        sh.flip_extract(&mut buf);
         Scalar::decode_reduce(&buf)
     }
 
@@ -2094,7 +2094,7 @@ pub mod ed448 {
 #[cfg(feature = "p256")]
 pub mod p256 {
     pub use crate::p256::{Point, Scalar};
-    use sha2::{Sha256, Digest};
+    use crate::sha2::Sha256;
 
     define_frost_core!{}
 
@@ -2277,7 +2277,7 @@ pub mod p256 {
 #[cfg(feature = "secp256k1")]
 pub mod secp256k1 {
     pub use crate::secp256k1::{Point, Scalar};
-    use sha2::{Sha256, Digest};
+    use crate::sha2::Sha256;
 
     define_frost_core!{}
 

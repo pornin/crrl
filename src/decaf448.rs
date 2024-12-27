@@ -802,7 +802,7 @@ impl SubAssign<&Point> for Point {
 mod tests {
 
     use super::{Point, Scalar};
-    use sha2::{Sha512, Digest};
+    use crate::sha2::Sha512;
 
     /*
     use std::fmt;

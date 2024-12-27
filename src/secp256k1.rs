@@ -83,7 +83,7 @@
 
 use core::ops::{Add, AddAssign, Mul, MulAssign, Neg, Sub, SubAssign};
 use super::field::{GFsecp256k1, ModInt256};
-use sha2::{Sha512, Digest};
+use crate::sha2::Sha512;
 use super::{CryptoRng, RngCore};
 use core::convert::TryFrom;
 
@@ -2298,7 +2298,7 @@ static PRECOMP_G195: [PointAffine; 16] = [
 mod tests {
 
     use super::{Point, Scalar, PrivateKey, PublicKey};
-    use sha2::{Sha256, Digest};
+    use crate::sha2::Sha256;
 
     /* unused
     fn print_gf(name: &str, x: GFsecp256k1) {

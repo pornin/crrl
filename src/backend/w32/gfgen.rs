@@ -2386,7 +2386,7 @@ macro_rules! define_gfgen_tests { ($typename:ident, $nqr:expr, $submod:ident) =>
     }
 
     fn mkrndv(vv: &mut [u8; $typename::ENC_LEN], bx: u64) {
-        use sha2::{Sha512, Digest};
+        use crate::sha2::Sha512;
 
         let mut sh = Sha512::new();
         let mut j = 0;

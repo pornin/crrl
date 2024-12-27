@@ -359,7 +359,7 @@ macro_rules! define_lms_tests { () => {
 /// LMS_SHA256_M32_H5 with LMOTS_SHA256_N32_W8
 pub mod LMS_SHA256_M32_H5_SHA256_N32_W8 {
 
-    use sha2::{Sha256, Digest};
+    use crate::sha2::Sha256;
 
     define_lms_core!{}
 
@@ -510,7 +510,7 @@ pub mod LMS_SHA256_M32_H5_SHA256_N32_W8 {
 /// LMS_SHA256_M24_H5 with LMOTS_SHA256_N24_W8
 pub mod LMS_SHA256_M24_H5_SHA256_N24_W8 {
 
-    use sha2::{Sha256, Digest};
+    use crate::sha2::Sha256;
 
     define_lms_core!{}
 
@@ -645,7 +645,7 @@ pub mod LMS_SHA256_M24_H5_SHA256_N24_W8 {
 /// LMS_SHAKE_M24_H5 with LMOTS_SHAKE_N24_W8
 pub mod LMS_SHAKE_M24_H5_SHAKE_N24_W8 {
 
-    use sha3::{Shake256, digest::{Update, ExtendableOutput, XofReader}};
+    use crate::sha3::SHAKE256;
 
     define_lms_core!{}
 
@@ -657,39 +657,39 @@ pub mod LMS_SHAKE_M24_H5_SHAKE_N24_W8 {
     const ots_type: u32 = 0x00000010;
 
     fn Hn(m1: &[u8], m2: &[u8], m3: &[u8], m4: &[u8], m5: &[u8]) -> [u8; n] {
-        let mut sh = Shake256::default();
-        sh.update(m1);
-        sh.update(m2);
-        sh.update(m3);
-        sh.update(m4);
-        sh.update(m5);
+        let mut sh = SHAKE256::new();
+        sh.inject(m1);
+        sh.inject(m2);
+        sh.inject(m3);
+        sh.inject(m4);
+        sh.inject(m5);
         let mut r = [0u8; n];
-        sh.finalize_xof().read(&mut r);
+        sh.flip_extract(&mut r);
         r
     }
 
     fn Hnx(m1: &[u8], m2: &[u8], m3: &[u8], mm: &[[u8; n]; p]) -> [u8; n] {
-        let mut sh = Shake256::default();
-        sh.update(m1);
-        sh.update(m2);
-        sh.update(m3);
+        let mut sh = SHAKE256::new();
+        sh.inject(m1);
+        sh.inject(m2);
+        sh.inject(m3);
         for i in 0..p {
-            sh.update(&mm[i]);
+            sh.inject(&mm[i]);
         }
         let mut r = [0u8; n];
-        sh.finalize_xof().read(&mut r);
+        sh.flip_extract(&mut r);
         r
     }
 
     fn Hm(m1: &[u8], m2: &[u8], m3: &[u8], m4: &[u8], m5: &[u8]) -> [u8; m] {
-        let mut sh = Shake256::default();
-        sh.update(m1);
-        sh.update(m2);
-        sh.update(m3);
-        sh.update(m4);
-        sh.update(m5);
+        let mut sh = SHAKE256::new();
+        sh.inject(m1);
+        sh.inject(m2);
+        sh.inject(m3);
+        sh.inject(m4);
+        sh.inject(m5);
         let mut r = [0u8; m];
-        sh.finalize_xof().read(&mut r);
+        sh.flip_extract(&mut r);
         r
     }
 
@@ -780,7 +780,7 @@ pub mod LMS_SHAKE_M24_H5_SHAKE_N24_W8 {
 /// LMS_SHAKE_M32_H5 with LMOTS_SHAKE_N32_W8
 pub mod LMS_SHAKE_M32_H5_SHAKE_N32_W8 {
 
-    use sha3::{Shake256, digest::{Update, ExtendableOutput, XofReader}};
+    use crate::sha3::SHAKE256;
 
     define_lms_core!{}
 
@@ -792,39 +792,39 @@ pub mod LMS_SHAKE_M32_H5_SHAKE_N32_W8 {
     const ots_type: u32 = 0x0000000c;
 
     fn Hn(m1: &[u8], m2: &[u8], m3: &[u8], m4: &[u8], m5: &[u8]) -> [u8; n] {
-        let mut sh = Shake256::default();
-        sh.update(m1);
-        sh.update(m2);
-        sh.update(m3);
-        sh.update(m4);
-        sh.update(m5);
+        let mut sh = SHAKE256::new();
+        sh.inject(m1);
+        sh.inject(m2);
+        sh.inject(m3);
+        sh.inject(m4);
+        sh.inject(m5);
         let mut r = [0u8; n];
-        sh.finalize_xof().read(&mut r);
+        sh.flip_extract(&mut r);
         r
     }
 
     fn Hnx(m1: &[u8], m2: &[u8], m3: &[u8], mm: &[[u8; n]; p]) -> [u8; n] {
-        let mut sh = Shake256::default();
-        sh.update(m1);
-        sh.update(m2);
-        sh.update(m3);
+        let mut sh = SHAKE256::new();
+        sh.inject(m1);
+        sh.inject(m2);
+        sh.inject(m3);
         for i in 0..p {
-            sh.update(&mm[i]);
+            sh.inject(&mm[i]);
         }
         let mut r = [0u8; n];
-        sh.finalize_xof().read(&mut r);
+        sh.flip_extract(&mut r);
         r
     }
 
     fn Hm(m1: &[u8], m2: &[u8], m3: &[u8], m4: &[u8], m5: &[u8]) -> [u8; m] {
-        let mut sh = Shake256::default();
-        sh.update(m1);
-        sh.update(m2);
-        sh.update(m3);
-        sh.update(m4);
-        sh.update(m5);
+        let mut sh = SHAKE256::new();
+        sh.inject(m1);
+        sh.inject(m2);
+        sh.inject(m3);
+        sh.inject(m4);
+        sh.inject(m5);
         let mut r = [0u8; m];
-        sh.finalize_xof().read(&mut r);
+        sh.flip_extract(&mut r);
         r
     }
 

@@ -743,7 +743,7 @@ impl SubAssign<&Point> for Point {
 mod tests {
 
     use super::{Point, Scalar};
-    use sha2::{Sha256, Digest};
+    use crate::sha2::Sha256;
 
     /*
     use std::fmt;

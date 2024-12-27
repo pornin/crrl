@@ -102,7 +102,7 @@
 use core::ops::{Add, AddAssign, Mul, MulAssign, Neg, Sub, SubAssign};
 use core::convert::TryFrom;
 use super::field::{GF25519, ModInt256};
-use sha2::{Sha512, Digest};
+use crate::sha2::Sha512;
 use super::{CryptoRng, RngCore};
 
 /// A point on the twisted Edwards curve edwards25519.
@@ -8262,7 +8262,7 @@ static UX_COMP: [u64; 16385] = [
 mod tests {
 
     use super::{Point, Scalar, PrivateKey, PublicKey};
-    use sha2::{Sha256, Sha512, Digest};
+    use crate::sha2::{Sha256, Sha512};
 
     /* unused
     use std::fmt;

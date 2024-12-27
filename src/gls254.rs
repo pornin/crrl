@@ -3990,7 +3990,7 @@ static PRECOMP_B95: [GFb254; 32] = [
 mod tests {
 
     use super::{Point, Scalar, PrivateKey, PublicKey};
-    use sha2::{Sha256, Digest};
+    use crate::sha2::Sha256;
     use crate::blake2s::Blake2s256;
     use crate::field::GFb254;
 

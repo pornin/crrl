@@ -119,7 +119,7 @@ pub fn x25519_base(scalar: &[u8; 32]) -> [u8; 32] {
 mod tests {
 
     use super::{x25519, x25519_base};
-    use sha2::{Sha256, Digest};
+    use crate::sha2::Sha256;
 
     #[test]
     fn x25519_mc() {

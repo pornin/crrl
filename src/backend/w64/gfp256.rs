@@ -1767,7 +1767,7 @@ mod tests {
 
     use super::{GFp256};
     use num_bigint::{BigInt, Sign};
-    use sha2::{Sha256, Digest};
+    use crate::sha2::Sha256;
 
     /*
     fn print(name: &str, v: GFp256) {
