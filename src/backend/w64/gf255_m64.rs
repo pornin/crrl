@@ -2317,6 +2317,32 @@ mod tests {
             }
             assert!(ok);
         }
+
+        // Values with all-zero or all-one limbs (2^k, -2^k, 2^k - 1 and
+        // 2^k + 1) need many binary GCD iterations to converge.
+        for k in 0..255 {
+            let mut vp = [0u8; 32];
+            vp[k >> 3] = 1u8 << (k & 7);
+            let x = GF255::<MQ>::decode_reduce(&vp);
+            sh.update(((1000 + k) as u64).to_le_bytes());
+            let vb = sh.finalize_reset();
+            let ys = [ x, -x, x - GF255::<MQ>::ONE, x + GF255::<MQ>::ONE ];
+            for j in 0..4 {
+                let y = ys[j];
+                let vy = y.encode32();
+                check_gf_ops::<MQ>(&vy, &vy, &vx);
+                check_gf_ops::<MQ>(&vb, &vy, &vx);
+                let (t, r) = y.sqrt();
+                if y.iszero() != 0 {
+                    assert!(y.legendre() == 0);
+                } else if r == 0xFFFFFFFF {
+                    assert!(t.square().equals(y) == 0xFFFFFFFF);
+                    assert!(y.legendre() == 1);
+                } else {
+                    assert!(y.legendre() == -1);
+                }
+            }
+        }
     }
 
     #[test]

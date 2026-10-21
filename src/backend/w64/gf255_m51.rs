@@ -1076,17 +1076,17 @@ impl<const MQ: u64> GF255<MQ> {
         // a separate variable. The top 13 bits of each produced limb is to
         // be ignored.
         let a0 = (a.0[0] ^ sf51).wrapping_sub(sf);
-        let a1 = (a.0[1] ^ sf51).wrapping_add(a0 >> 63);
-        let a2 = (a.0[2] ^ sf51).wrapping_add(a1 >> 63);
-        let a3 = (a.0[3] ^ sf51).wrapping_add(a2 >> 63);
-        let a4 = (a.0[4] ^ sf51).wrapping_add(a3 >> 63);
+        let a1 = (a.0[1] ^ sf51).wrapping_add(a0 >> 51);
+        let a2 = (a.0[2] ^ sf51).wrapping_add(a1 >> 51);
+        let a3 = (a.0[3] ^ sf51).wrapping_add(a2 >> 51);
+        let a4 = (a.0[4] ^ sf51).wrapping_add(a3 >> 51);
         let sa = sf.wrapping_add(a4 >> 51);
         let b0 = (b.0[0] ^ sg51).wrapping_sub(sg);
-        let b1 = (b.0[1] ^ sg51).wrapping_add(b0 >> 63);
-        let b2 = (b.0[2] ^ sg51).wrapping_add(b1 >> 63);
-        let b3 = (b.0[3] ^ sg51).wrapping_add(b2 >> 63);
-        let b4 = (b.0[4] ^ sg51).wrapping_add(b3 >> 63);
-        let sb = sg.wrapping_add(a4 >> 51);
+        let b1 = (b.0[1] ^ sg51).wrapping_add(b0 >> 51);
+        let b2 = (b.0[2] ^ sg51).wrapping_add(b1 >> 51);
+        let b3 = (b.0[3] ^ sg51).wrapping_add(b2 >> 51);
+        let b4 = (b.0[4] ^ sg51).wrapping_add(b3 >> 51);
+        let sb = sg.wrapping_add(b4 >> 51);
 
         // Compute a*f+b*g into e0..e4 + high word in e5. The shift of
         // source limbs by 13 is needed to remove spurious bits left in
@@ -1140,10 +1140,10 @@ impl<const MQ: u64> GF255<MQ> {
         let t = sgnw(e5);
         let sv = t & M51;
         let r0 = (v0 ^ sv).wrapping_add(sv & 1);
-        let r1 = (v1 ^ sv).wrapping_add(r0 >> 63);
-        let r2 = (v2 ^ sv).wrapping_add(r1 >> 63);
-        let r3 = (v3 ^ sv).wrapping_add(r2 >> 63);
-        let r4 = (v4 ^ sv).wrapping_add(r3 >> 63);
+        let r1 = (v1 ^ sv).wrapping_add(r0 >> 51);
+        let r2 = (v2 ^ sv).wrapping_add(r1 >> 51);
+        let r3 = (v3 ^ sv).wrapping_add(r2 >> 51);
+        let r4 = (v4 ^ sv).wrapping_add(r3 >> 51);
         self.0[0] = r0 & M51;
         self.0[1] = r1 & M51;
         self.0[2] = r2 & M51;
@@ -1688,6 +1688,7 @@ impl<const MQ: u64> GF255<MQ> {
         for _ in 0..43 {
             let a_odd = (xa & 1).wrapping_neg();
             let swap = a_odd & sgnw(xa.wrapping_sub(xb));
+            ls ^= swap & (xa & xb);
             let t1 = swap & (xa ^ xb);
             xa ^= t1;
             xb ^= t1;
@@ -2877,6 +2878,32 @@ mod tests {
                 }
             }
             assert!(ok);
+        }
+
+        // Values with all-zero or all-one limbs (2^k, -2^k, 2^k - 1 and
+        // 2^k + 1) need many binary GCD iterations to converge.
+        for k in 0..255 {
+            let mut vp = [0u8; 32];
+            vp[k >> 3] = 1u8 << (k & 7);
+            let x = GF255::<MQ>::decode_reduce(&vp);
+            sh.update(((1000 + k) as u64).to_le_bytes());
+            let vb = sh.finalize_reset();
+            let ys = [ x, -x, x - GF255::<MQ>::ONE, x + GF255::<MQ>::ONE ];
+            for j in 0..4 {
+                let y = ys[j];
+                let vy = y.encode32();
+                check_gf_ops::<MQ>(&vy, &vy, &vx);
+                check_gf_ops::<MQ>(&vb, &vy, &vx);
+                let (t, r) = y.sqrt();
+                if y.iszero() != 0 {
+                    assert!(y.legendre() == 0);
+                } else if r == 0xFFFFFFFF {
+                    assert!(t.square().equals(y) == 0xFFFFFFFF);
+                    assert!(y.legendre() == 1);
+                } else {
+                    assert!(y.legendre() == -1);
+                }
+            }
         }
     }
 
